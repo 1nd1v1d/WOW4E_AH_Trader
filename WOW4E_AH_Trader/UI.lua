@@ -1,6 +1,6 @@
 local AHT = WOW4E_AHT
 
-AHT.UI = { rows = {}, dialogs = {} }
+AHT.UI = { rows = {}, dialogs = {}, viewMode = "recipes", lastMessage = "" }
 
 local function MakeBackdrop(frame)
     if frame.SetBackdrop then
@@ -26,6 +26,41 @@ local function Label(parent, text, size)
     if size then font:SetWidth(size) end
     font:SetJustifyH("LEFT")
     return font
+end
+
+local VIEW_INFO = {
+    recipes = {
+        title = "Rezepte",
+        help = "Alle erkannten Herstellungsrezepte mit Kosten, Verkauf und Gewinn.",
+    },
+    transmute = {
+        title = "Transmute",
+        help = "Nur Rezepte, deren Berufsname als Transmutation erkannt wurde.",
+    },
+    materials = {
+        title = "Materialien",
+        help = "Überwachte Auktionshaus-Materialien. Eingabe akzeptiert Item-Link oder Item-ID.",
+    },
+    reputation = {
+        title = "Ruf",
+        help = "Runenstoff-Spenden für die beobachtete Hauptstadtfraktion.",
+    },
+    diagnostics = {
+        title = "Diagnose",
+        help = "Laufzeit- und API-Informationen des Forever-Beta-Clients.",
+    },
+}
+
+function AHT.UI:AddMessage(message)
+    self.lastMessage = tostring(message or "")
+    if self.status then self:RefreshStatus() end
+end
+
+function AHT.UI:SetView(viewMode)
+    self.viewMode = VIEW_INFO[viewMode] and viewMode or "recipes"
+    if not self.frame then self:Create() end
+    self:Refresh()
+    self.frame:Show()
 end
 
 function AHT.UI:Create()
@@ -54,6 +89,13 @@ function AHT.UI:Create()
     self.status = Label(self.frame, "", 720)
     self.status:SetPoint("TOPLEFT", 18, -46)
 
+    self.viewTitle = Label(self.frame, "", 720)
+    self.viewTitle:SetPoint("TOPLEFT", 18, -101)
+    self.viewTitle:SetFontObject("GameFontHighlight")
+
+    self.viewHelp = Label(self.frame, "", 720)
+    self.viewHelp:SetPoint("TOPLEFT", 18, -119)
+
     self.scanButton = Button(self.frame, nil, "Scan", 100, 24)
     self.scanButton:SetPoint("TOPLEFT", 18, -70)
     self.scanButton:SetScript("OnClick", function()
@@ -64,30 +106,30 @@ function AHT.UI:Create()
     self.recipeButton = Button(self.frame, nil, "Rezepte", 100, 24)
     self.recipeButton:SetPoint("LEFT", self.scanButton, "RIGHT", 8, 0)
     self.recipeButton:SetScript("OnClick", function()
+        self:SetView("recipes")
         if AHT.Recipes then AHT.Recipes:Refresh() end
-        AHT:Refresh()
     end)
 
     self.matsButton = Button(self.frame, nil, "Materialien", 100, 24)
     self.matsButton:SetPoint("LEFT", self.recipeButton, "RIGHT", 8, 0)
-    self.matsButton:SetScript("OnClick", function() self:ShowMaterials() end)
+    self.matsButton:SetScript("OnClick", function() self:SetView("materials") end)
 
     self.transmuteButton = Button(self.frame, nil, "Transmute", 100, 24)
     self.transmuteButton:SetPoint("LEFT", self.matsButton, "RIGHT", 8, 0)
     self.transmuteButton:SetScript("OnClick", function()
-        if AHT.Transmute then AHT.Transmute:Print() end
+        self:SetView("transmute")
     end)
 
     self.reputationButton = Button(self.frame, nil, "Ruf", 70, 24)
     self.reputationButton:SetPoint("LEFT", self.transmuteButton, "RIGHT", 8, 0)
     self.reputationButton:SetScript("OnClick", function()
-        if AHT.Reputation then AHT.Reputation:Print() end
+        self:SetView("reputation")
     end)
 
     self.debugButton = Button(self.frame, nil, "Debug", 80, 24)
     self.debugButton:SetPoint("LEFT", self.reputationButton, "RIGHT", 8, 0)
     self.debugButton:SetScript("OnClick", function()
-        if AHT.Diagnostics then AHT.Diagnostics:Print() end
+        self:SetView("diagnostics")
     end)
 
     self.materialInput = CreateFrame("EditBox", nil, self.frame, "InputBoxTemplate")
@@ -95,21 +137,24 @@ function AHT.UI:Create()
     self.materialInput:SetPoint("TOPRIGHT", -115, -70)
     self.materialInput:SetAutoFocus(false)
     self.materialInput:SetTextInsets(6, 6, 0, 0)
+    local function AddMaterialFromInput(box)
+        local value = box:GetText()
+        if value ~= "" and AHT.Mats:Add(value) then box:SetText("") end
+    end
     self.materialInput:SetScript("OnEnterPressed", function(box)
-        if box:GetText() ~= "" then AHT.Mats:Add(box:GetText()); box:SetText("") end
+        AddMaterialFromInput(box)
     end)
     self.materialInput:SetScript("OnEscapePressed", function(box) box:ClearFocus() end)
 
     self.materialAdd = Button(self.frame, nil, "+ Mat", 75, 24)
     self.materialAdd:SetPoint("LEFT", self.materialInput, "RIGHT", 8, 0)
     self.materialAdd:SetScript("OnClick", function()
-        local value = self.materialInput:GetText()
-        if value ~= "" then AHT.Mats:Add(value); self.materialInput:SetText("") end
+        AddMaterialFromInput(self.materialInput)
     end)
 
     local scrollTemplate = "UIPanelScrollFrameTemplate"
     self.scroll = CreateFrame("ScrollFrame", nil, self.frame, scrollTemplate)
-    self.scroll:SetPoint("TOPLEFT", 18, -108)
+    self.scroll:SetPoint("TOPLEFT", 18, -140)
     self.scroll:SetPoint("BOTTOMRIGHT", -34, 18)
     self.content = CreateFrame("Frame", nil, self.scroll)
     self.content:SetSize(690, 420)
@@ -152,25 +197,106 @@ function AHT.UI:RefreshStatus()
     if AHT.Scanner and AHT.Scanner.running then
         progress = string.format(" | %d/%d", AHT.Scanner.completed, AHT.Scanner.total)
     end
-    self.status:SetText("Status: " .. state .. progress)
+    local view = VIEW_INFO[self.viewMode] or VIEW_INFO.recipes
+    self.status:SetText("Ansicht: " .. view.title .. " | Status: " .. state .. progress)
+    if self.viewTitle then self.viewTitle:SetText(view.title) end
+    local help = view.help
+    if self.lastMessage ~= "" then help = help .. " | " .. self.lastMessage end
+    if self.viewHelp then self.viewHelp:SetText(help) end
     self.scanButton:SetText(AHT.Scanner and AHT.Scanner.running and "Abbrechen" or "Scan")
 end
 
-function AHT.UI:Refresh()
+function AHT.UI:BuildMaterialRows()
+    local rows, materials = {}, AHT.DB and AHT.DB.materials or {}
+    local list = {}
+    for _, material in pairs(materials) do table.insert(list, material) end
+    table.sort(list, function(a, b)
+        return tostring(a.name or a.itemID) < tostring(b.name or b.itemID)
+    end)
+    for _, material in ipairs(list) do
+        local record = AHT.Store and AHT.Store:GetByItemID(material.itemID)
+        local price = record and record.minPrice and AHT:FormatMoneyPlain(record.minPrice) or AHT.L.noData
+        table.insert(rows, {
+            kind = "info",
+            text = string.format("%-36s | Item-ID %s | Marktpreis %s", material.name or "?", tostring(material.itemID), price),
+        })
+    end
+    if #rows == 0 then
+        table.insert(rows, { kind = "info", text = "Keine Materialien. Item-Link oder Item-ID oben eingeben und + Mat drücken." })
+    end
+    return rows
+end
+
+function AHT.UI:BuildReputationRows()
+    local rows = {}
+    local status, reason = AHT.Reputation and AHT.Reputation:GetStatus()
+    if not status or not status.isCapital then
+        table.insert(rows, { kind = "info", text = "Keine beobachtete Hauptstadtfraktion. Grund: " .. tostring(reason or "unbekannt") })
+        return rows
+    end
+    table.insert(rows, { kind = "info", text = "Fraktion: " .. tostring(status.name) })
+    if status.donations == 0 then
+        table.insert(rows, { kind = "info", text = "Bereits Ehrfürchtig." })
+        return rows
+    end
+    table.insert(rows, { kind = "info", text = string.format("Benötigte Spenden: %d | Runenstoff: %d", status.donations, status.runecloth) })
+    local cost, source, unitPrice = AHT.Reputation:GetCost(status)
+    if cost then
+        table.insert(rows, { kind = "info", text = string.format("Preis: %s pro Stück (%s) | Gesamtkosten: %s", AHT:FormatMoneyPlain(unitPrice), source, AHT:FormatMoneyPlain(cost)) })
+    else
+        table.insert(rows, { kind = "info", text = "Noch kein Runenstoff-Marktpreis vorhanden. Erst einen Scan durchführen." })
+    end
+    return rows
+end
+
+function AHT.UI:BuildDiagnosticsRows()
+    local rows, c = {}, AHT.Capabilities or {}
+    table.insert(rows, { kind = "info", text = string.format("Version %s | Client %s | Build %s | Interface %s", AHT.VERSION, tostring(c.version), tostring(c.build), tostring(c.interface)) })
+    table.insert(rows, { kind = "info", text = string.format("WOW_PROJECT_ID=%s | Forever-Beta=%s | AH offen=%s", tostring(c.projectID), tostring(c.foreverBeta), tostring(AHT.AHOpen)) })
+    table.insert(rows, { kind = "info", text = string.format("Rezepte=%d | Markt=%d | Materialien=%d", #((AHT.Recipes and AHT.Recipes:GetList()) or {}), AHT:TableCount(AHT.DB and AHT.DB.market), AHT:TableCount(AHT.DB and AHT.DB.materials)) })
+    local names = {}
+    for name in pairs(c.functions or {}) do table.insert(names, name) end
+    table.sort(names)
+    for _, name in ipairs(names) do table.insert(rows, { kind = "info", text = name .. "=" .. tostring(c.functions[name]) }) end
+    if AHT.State.lastError then table.insert(rows, { kind = "info", text = "Letzter Fehler: " .. AHT.State.lastError }) end
+    return rows
+end
+
+function AHT.UI:Refresh(skipCalculator)
     if not self.frame then return end
-    if AHT.Calculator then AHT.Calculator:Refresh() end
-    local results = AHT.Calculator and AHT.Calculator.results or {}
+    local mode = self.viewMode or "recipes"
+    local results
+    if mode == "materials" then
+        results = self:BuildMaterialRows()
+    elseif mode == "reputation" then
+        results = self:BuildReputationRows()
+    elseif mode == "diagnostics" then
+        results = self:BuildDiagnosticsRows()
+    else
+        if not skipCalculator and AHT.Calculator then AHT.Calculator:Refresh() end
+        results = mode == "transmute" and AHT.Calculator and AHT.Calculator:CalculateTransmutes() or (AHT.Calculator and AHT.Calculator.results)
+        results = results or {}
+        if #results == 0 then
+            results = {{ kind = "info", text = mode == "transmute" and "Keine Transmutationsrezepte erkannt. Öffne das Berufsfenster und aktualisiere die Rezepte." or "Keine Rezepte erkannt. Öffne das Berufsfenster und aktualisiere die Rezepte." }}
+        end
+    end
     self.content:SetHeight(math.max(420, #results * 21))
     for index, row in ipairs(self.rows) do
         local result = results[index]
         row.result = result
         if result then
-            local profit = result.profit and AHT:FormatMoneyPlain(result.profit) or AHT.L.incomplete
-            local margin = result.margin and string.format("%.1f%%", result.margin) or "-"
-            local cost = result.ingredientCost and AHT:FormatMoneyPlain(result.ingredientCost) or "?"
-            local sale = result.salePrice and AHT:FormatMoneyPlain(result.salePrice) or "?"
-            local prefix = result.isDeal and "★ " or ""
-            row.text:SetText(string.format("%s%-34s Kosten %8s | Verkauf %8s | Gewinn %8s | %s", prefix, result.name or "?", cost, sale, profit, margin))
+            if result.kind == "info" then
+                row.text:SetText(result.text or "")
+                row:EnableMouse(false)
+            else
+                local profit = result.profit and AHT:FormatMoneyPlain(result.profit) or AHT.L.incomplete
+                local margin = result.margin and string.format("%.1f%%", result.margin) or "-"
+                local cost = result.ingredientCost and AHT:FormatMoneyPlain(result.ingredientCost) or "?"
+                local sale = result.salePrice and AHT:FormatMoneyPlain(result.salePrice) or "?"
+                local prefix = result.isDeal and "★ " or ""
+                row.text:SetText(string.format("%s%-34s Kosten %8s | Verkauf %8s | Gewinn %8s | %s", prefix, result.name or "?", cost, sale, profit, margin))
+                row:EnableMouse(true)
+            end
             row:Show()
         else
             row.text:SetText("")
@@ -187,11 +313,22 @@ function AHT.UI:Show()
 end
 
 function AHT.UI:ShowAHButton()
+    local auctionHouse = _G.AuctionHouseFrame
+    local parent = auctionHouse or UIParent
     if not self.ahButton then
-        self.ahButton = Button(UIParent, "WOW4E_AH_Trader_AHButton", "AH Trader", 100, 24)
-        self.ahButton:SetPoint("TOP", 0, -90)
-        self.ahButton:SetFrameStrata("HIGH")
+        self.ahButton = Button(parent, "WOW4E_AH_Trader_AHButton", "AH Trader", 100, 24)
         self.ahButton:SetScript("OnClick", function() self:Show() end)
+    else
+        self.ahButton:SetParent(parent)
+    end
+    self.ahButton:ClearAllPoints()
+    if auctionHouse then
+        self.ahButton:SetPoint("TOPRIGHT", auctionHouse, "TOPRIGHT", -140, -8)
+        self.ahButton:SetFrameStrata(auctionHouse:GetFrameStrata() or "HIGH")
+        self.ahButton:SetFrameLevel((auctionHouse:GetFrameLevel() or 1) + 10)
+    else
+        self.ahButton:SetPoint("TOP", UIParent, "TOP", 0, -90)
+        self.ahButton:SetFrameStrata("HIGH")
     end
     self.ahButton:Show()
 end
@@ -377,11 +514,5 @@ function AHT.UI:ShowPostDialog(result)
 end
 
 function AHT.UI:ShowMaterials()
-    self:Show()
-    local text = "Materialien:\n"
-    for _, material in pairs(AHT.DB.materials or {}) do
-        local record = AHT.Store:GetByItemID(material.itemID)
-        text = text .. string.format("%s: %s\n", material.name or tostring(material.itemID), record and AHT:FormatMoneyPlain(record.minPrice) or AHT.L.noData)
-    end
-    AHT:Print(text:gsub("\n", " | "))
+    self:SetView("materials")
 end

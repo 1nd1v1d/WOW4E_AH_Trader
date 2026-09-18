@@ -134,13 +134,9 @@ function AHT.Recipes:Targets()
 end
 
 function AHT.Recipes:Print()
-    local list = self:GetList()
-    if #list == 0 then
-        AHT:Print(AHT.L.noRecipes)
+    if AHT.UI then
+        AHT.UI:SetView("recipes")
         return
     end
-    AHT:Print(string.format(AHT.L.recipesLoaded, #list))
-    for _, recipe in ipairs(list) do
-        AHT:Print(recipe.name .. " -> " .. (recipe.output.name or tostring(recipe.output.itemID)))
-    end
+    AHT:Print(AHT.L.noRecipes)
 end

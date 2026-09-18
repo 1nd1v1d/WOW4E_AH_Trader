@@ -6,7 +6,7 @@
 
 Ein eigenständiger Auction-House-, Rezept- und Margenanalysator für **World of Warcraft: Forever**. Das Addon ist aus dem ursprünglichen `TWOW_AH_Trader`-Projekt abgeleitet, verwendet aber eine getrennte moderne API-Schicht für die Forever-Beta.
 
-> Status: Beta-Port für Interface `16001` / Version `0.2.1-beta`. Rezept-, Commodity-Kauf- und Post-Events müssen weiterhin im echten Forever-Client verifiziert werden.
+> Status: Beta-Port für Interface `16001` / Version `0.2.2-beta`. Rezept-, Commodity-Kauf- und Post-Events müssen weiterhin im echten Forever-Client verifiziert werden.
 
 ## Funktionen
 
@@ -43,6 +43,8 @@ Danach im Client `/reload` ausführen oder den Client neu starten.
 | `/aht stop` | laufende Operationen abbrechen |
 | `/aht debug` | Client- und API-Diagnose ausgeben |
 | `/aht reset` | gespeicherte Marktdaten löschen |
+
+Beim Öffnen des Auktionshauses erscheint ein `AH Trader`-Button direkt am Auktionshaus. Im Hauptfenster gibt es getrennte Ansichten für `Rezepte`, `Transmute`, `Materialien`, `Ruf` und `Debug`; Ergebnislisten werden dort angezeigt und nicht mehr als mehrzeilige Chat-Ausgabe ausgegeben. Materialien können über Item-Link oder Item-ID eingetragen werden.
 
 ## Ruf- und Runenstoffanalyse
 

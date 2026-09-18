@@ -88,5 +88,5 @@ end
 
 function AHT:Refresh()
     if self.Calculator then self.Calculator:Refresh() end
-    if self.UI then self.UI:Refresh() end
+    if self.UI then self.UI:Refresh(true) end
 end

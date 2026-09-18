@@ -98,6 +98,14 @@ function AHT:GetItemID(value)
     if type(value) == "number" then return value end
     if type(value) ~= "string" then return nil end
 
+    value = value:match("^%s*(.-)%s*$")
+    if value == "" then return nil end
+
+    -- The material input accepts an item ID as well as an item link. This is
+    -- important when the client has not cached the item name/link yet.
+    local numericID = value:match("^(%d+)$")
+    if numericID then return tonumber(numericID) end
+
     local linkID = value:match("|Hitem:(%d+)")
     if linkID then return tonumber(linkID) end
 

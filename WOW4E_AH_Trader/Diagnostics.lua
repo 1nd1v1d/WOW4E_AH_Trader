@@ -3,6 +3,10 @@ local AHT = WOW4E_AHT
 AHT.Diagnostics = {}
 
 function AHT.Diagnostics:Print()
+    if AHT.UI then
+        AHT.UI:SetView("diagnostics")
+        return
+    end
     local c = AHT.Capabilities or {}
     AHT:Print("--- Runtime-Diagnose ---")
     AHT:Print(string.format("Version %s | Client %s | Build %s | Interface %s", AHT.VERSION, tostring(c.version), tostring(c.build), tostring(c.interface)))

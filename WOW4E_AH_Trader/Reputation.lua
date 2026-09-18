@@ -227,6 +227,10 @@ function AHT.Reputation:OnEvent(eventName)
 end
 
 function AHT.Reputation:Print()
+    if AHT.UI then
+        AHT.UI:SetView("reputation")
+        return
+    end
     local status, reason = self:GetStatus()
     if not status or not status.isCapital then
         AHT:Print("Keine beobachtete Hauptstadtfraktion. Grund: " .. tostring(reason or "unbekannt"))

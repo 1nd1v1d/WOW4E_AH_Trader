@@ -2,7 +2,7 @@ WOW4E_AHT = WOW4E_AHT or {}
 local AHT = WOW4E_AHT
 
 AHT.ADDON_NAME = "WOW4E_AH_Trader"
-AHT.VERSION = "0.2.1-beta"
+AHT.VERSION = "0.2.2-beta"
 AHT.AHOpen = false
 AHT.Initialized = false
 AHT.State = {
@@ -50,6 +50,12 @@ for _, eventName in ipairs(EVENTS) do
 end
 
 function AHT:Print(message)
+    -- Result and command output belongs in the addon UI. Keep the chat
+    -- fallback for the short period before the UI has been created.
+    if self.UI and self.UI.AddMessage then
+        self.UI:AddMessage(message)
+        return
+    end
     local prefix = "|cff00ccff[WoW4E AH Trader]|r "
     if DEFAULT_CHAT_FRAME and DEFAULT_CHAT_FRAME.AddMessage then
         DEFAULT_CHAT_FRAME:AddMessage(prefix .. tostring(message))
@@ -195,7 +201,8 @@ SlashCmdList.WOW4E_AHT = function(message)
         if AHT.Poster then AHT.Poster:Cancel("user") end
         if AHT.AH then AHT.AH:Cancel("user") end
     elseif command == "recipes" then
-        if AHT.Recipes then AHT.Recipes:Print() end
+        if AHT.UI then AHT.UI:SetView("recipes") end
+        if AHT.Recipes then AHT.Recipes:Refresh() end
     elseif command == "mats" then
         if AHT.Mats then
             local subcommand, value = (rest or ""):match("^(%S*)%s*(.-)%s*$")
@@ -208,14 +215,14 @@ SlashCmdList.WOW4E_AHT = function(message)
             end
         end
     elseif command == "transmute" then
-        if AHT.Transmute then AHT.Transmute:Print() end
+        if AHT.UI then AHT.UI:SetView("transmute") end
     elseif command == "ruf" or command == "rep" or command == "reputation" then
-        if AHT.Reputation then AHT.Reputation:Print() end
+        if AHT.UI then AHT.UI:SetView("reputation") end
     elseif command == "reset" then
         if AHT.Store then AHT.Store:ResetMarket() end
         AHT:Print(AHT.L and AHT.L.reset or "Marktdaten gelöscht.")
     elseif command == "debug" then
-        if AHT.Diagnostics then AHT.Diagnostics:Print() end
+        if AHT.UI then AHT.UI:SetView("diagnostics") end
     elseif command == "post" then
         AHT:Print(AHT.L and AHT.L.postHint or "Posten erfolgt über eine sichtbare Vorschau im Addon.")
     else
