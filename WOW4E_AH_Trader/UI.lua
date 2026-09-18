@@ -30,12 +30,20 @@ local function Label(parent, text, size)
     return font
 end
 
-local TABLE_COLUMNS = {
-    { key = "name", label = "Rezept / Ergebnis", width = 310 },
-    { key = "ingredientCost", label = "Kosten", width = 95 },
-    { key = "salePrice", label = "Verkauf", width = 95 },
-    { key = "profit", label = "Gewinn", width = 100 },
-    { key = "margin", label = "Marge", width = 80 },
+local RECIPE_COLUMNS = {
+    { key = "name", label = "Rezept / Ergebnis", width = 300 },
+    { key = "ingredientCost", label = "Kosten", width = 100 },
+    { key = "salePrice", label = "Verkauf", width = 100 },
+    { key = "profit", label = "Gewinn", width = 105 },
+    { key = "margin", label = "Marge", width = 95 },
+}
+
+local MATERIAL_COLUMNS = {
+    { key = "name", label = "Material", width = 270 },
+    { key = "itemID", label = "Item-ID", width = 100 },
+    { key = "currentPrice", label = "Aktuell", width = 110 },
+    { key = "averagePrice", label = "Ø AH-Preis", width = 130 },
+    { key = "updatedAt", label = "Letzter Scan", width = 90 },
 }
 
 local TABLE_WIDTH = 700
@@ -207,12 +215,15 @@ function AHT.UI:Create()
     self.tableHeader:SetPoint("TOPLEFT", 18, -174)
     self.headers = {}
     local offset = 0
-    for _, column in ipairs(TABLE_COLUMNS) do
-        local header = HeaderButton(self.tableHeader, column.label, column.width)
+    for index = 1, 5 do
+        local header = HeaderButton(self.tableHeader, "", 100)
         header:SetPoint("LEFT", offset, 0)
-        header:SetScript("OnClick", function() self:SetSort(column.key) end)
-        self.headers[column.key] = header
-        offset = offset + column.width
+        header:SetScript("OnClick", function()
+            local columns = self:GetActiveColumns()
+            if columns[index] then self:SetSort(columns[index].key) end
+        end)
+        self.headers[index] = header
+        offset = offset + 100
     end
 
     local scrollTemplate = "UIPanelScrollFrameTemplate"
@@ -240,23 +251,22 @@ function AHT.UI:CreateRows()
         row.info:SetPoint("LEFT", 8, 0)
         row.info:SetWidth(TABLE_WIDTH - 16)
         row.info:SetJustifyH("LEFT")
-        row.columns = {}
-        local offset = 0
-        for _, column in ipairs(TABLE_COLUMNS) do
+        row.cells = {}
+        for index = 1, 5 do
             local text = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-            text:SetPoint("LEFT", offset + 6, 0)
-            text:SetWidth(column.width - 12)
-            text:SetJustifyH(column.key == "name" and "LEFT" or "RIGHT")
-            row.columns[column.key] = text
-            offset = offset + column.width
+            row.cells[index] = text
         end
         row:SetScript("OnClick", function()
-            if row.result and row.result.kind ~= "info" then self:ShowRecipeActions(row.result) end
+            if row.result and row.result.kind ~= "info" and row.result.kind ~= "material" then
+                self:ShowRecipeActions(row.result)
+            end
         end)
         row:SetScript("OnEnter", function()
             if row.result then
                 row.bg:SetColorTexture(0.2, 0.2, 0.05, 0.75)
-                if row.result.kind ~= "info" then self:ShowRecipeContext(row.result, row) end
+                if row.result.kind ~= "info" and row.result.kind ~= "material" then
+                    self:ShowRecipeContext(row.result, row)
+                end
             end
         end)
         row:SetScript("OnLeave", function()
@@ -264,6 +274,44 @@ function AHT.UI:CreateRows()
             if self.recipeTooltipOwner == row then self:HideRecipeContext() end
         end)
         self.rows[index] = row
+    end
+end
+
+function AHT.UI:GetActiveColumns()
+    if self.viewMode == "materials" then return MATERIAL_COLUMNS end
+    return RECIPE_COLUMNS
+end
+
+function AHT.UI:EnsureSortColumn()
+    local columns = self:GetActiveColumns()
+    for _, column in ipairs(columns) do
+        if column.key == self.sortColumn then return end
+    end
+    if self.viewMode == "materials" then
+        self.sortColumn = "currentPrice"
+        self.sortAscending = false
+    else
+        self.sortColumn = "profit"
+        self.sortAscending = false
+    end
+end
+
+function AHT.UI:LayoutTable()
+    local columns = self:GetActiveColumns()
+    local offset = 0
+    for index, column in ipairs(columns) do
+        local header = self.headers[index]
+        header:ClearAllPoints()
+        header:SetWidth(column.width)
+        header:SetPoint("LEFT", offset, 0)
+        for _, row in ipairs(self.rows) do
+            local cell = row.cells[index]
+            cell:ClearAllPoints()
+            cell:SetPoint("LEFT", offset + 6, 0)
+            cell:SetWidth(column.width - 12)
+            cell:SetJustifyH(index == 1 and "LEFT" or "RIGHT")
+        end
+        offset = offset + column.width
     end
 end
 
@@ -278,8 +326,9 @@ function AHT.UI:SetSort(column)
 end
 
 function AHT.UI:UpdateHeaders()
-    local tableMode = self.viewMode == "recipes" or self.viewMode == "transmute"
+    local tableMode = self.viewMode == "recipes" or self.viewMode == "transmute" or self.viewMode == "materials"
     if not self.tableHeader then return end
+    self:LayoutTable()
     self.scroll:ClearAllPoints()
     self.scroll:SetPoint("TOPLEFT", 18, tableMode and -202 or -174)
     self.scroll:SetPoint("BOTTOMRIGHT", -34, 18)
@@ -288,8 +337,9 @@ function AHT.UI:UpdateHeaders()
         return
     end
     self.tableHeader:Show()
-    for _, column in ipairs(TABLE_COLUMNS) do
-        local header = self.headers[column.key]
+    local columns = self:GetActiveColumns()
+    for index, column in ipairs(columns) do
+        local header = self.headers[index]
         local marker = ""
         if self.sortColumn == column.key then
             marker = self.sortAscending and "  |cff66ff66▲|r" or "  |cffffaa44▼|r"
@@ -301,7 +351,8 @@ end
 function AHT.UI:SortResults(results)
     local sorted = {}
     for _, result in ipairs(results or {}) do table.insert(sorted, result) end
-    local key = self.sortColumn or "profit"
+    self:EnsureSortColumn()
+    local key = self.sortColumn
     local ascending = self.sortAscending == true
     table.sort(sorted, function(a, b)
         local av, bv
@@ -397,10 +448,18 @@ function AHT.UI:BuildMaterialRows()
     end)
     for _, material in ipairs(list) do
         local record = AHT.Store and AHT.Store:GetByItemID(material.itemID)
-        local price = record and record.minPrice and AHT:FormatMoneyPlain(record.minPrice) or AHT.L.noData
+        local currentPrice = record and tonumber(record.minPrice) or nil
+        local averagePrice = AHT.Store and AHT.Store:RecencyAverage(material.itemID) or nil
+        local updatedAt = record and tonumber(record.updatedAt) or nil
+        local updatedText = updatedAt and date("%d.%m.%y", updatedAt) or "-"
         table.insert(rows, {
-            kind = "info",
-            text = string.format("%-36s | Item-ID %s | Marktpreis %s", material.name or "?", tostring(material.itemID), price),
+            kind = "material",
+            name = material.name or "?",
+            itemID = tonumber(material.itemID) or material.itemID,
+            currentPrice = currentPrice,
+            averagePrice = averagePrice,
+            updatedAt = updatedAt,
+            updatedText = updatedText,
         })
     end
     if #rows == 0 then
@@ -449,7 +508,7 @@ function AHT.UI:Refresh(skipCalculator)
     local mode = self.viewMode or "recipes"
     local results
     if mode == "materials" then
-        results = self:BuildMaterialRows()
+        results = self:SortResults(self:BuildMaterialRows())
     elseif mode == "reputation" then
         results = self:BuildReputationRows()
     elseif mode == "diagnostics" then
@@ -472,7 +531,18 @@ function AHT.UI:Refresh(skipCalculator)
             if result.kind == "info" then
                 row.info:SetText(result.text or "")
                 row.info:Show()
-                for _, column in ipairs(TABLE_COLUMNS) do row.columns[column.key]:Hide() end
+                for index = 1, 5 do row.cells[index]:Hide() end
+                row:EnableMouse(false)
+            elseif result.kind == "material" then
+                row.info:Hide()
+                row.cells[1]:SetText(result.name or "?")
+                row.cells[2]:SetText(tostring(result.itemID or "?"))
+                row.cells[3]:SetText(result.currentPrice and AHT:FormatMoneyPlain(result.currentPrice) or AHT.L.noData)
+                row.cells[4]:SetText(result.averagePrice and AHT:FormatMoneyPlain(result.averagePrice) or AHT.L.noData)
+                row.cells[5]:SetText(result.updatedText or "-")
+                for index = 1, 5 do row.cells[index]:Show() end
+                row.cells[3]:SetTextColor(1, 0.85, 0.4)
+                row.cells[4]:SetTextColor(0.45, 1, 0.55)
                 row:EnableMouse(false)
             else
                 local profit = result.profit and AHT:FormatMoneyPlain(result.profit) or AHT.L.incomplete
@@ -481,16 +551,16 @@ function AHT.UI:Refresh(skipCalculator)
                 local sale = result.salePrice and AHT:FormatMoneyPlain(result.salePrice) or "?"
                 local prefix = result.isDeal and "★ " or ""
                 row.info:Hide()
-                row.columns.name:SetText(prefix .. (result.name or "?"))
-                row.columns.ingredientCost:SetText(cost)
-                row.columns.salePrice:SetText(sale)
-                row.columns.profit:SetText(profit)
-                row.columns.margin:SetText(margin)
-                for _, column in ipairs(TABLE_COLUMNS) do row.columns[column.key]:Show() end
+                row.cells[1]:SetText(prefix .. (result.name or "?"))
+                row.cells[2]:SetText(cost)
+                row.cells[3]:SetText(sale)
+                row.cells[4]:SetText(profit)
+                row.cells[5]:SetText(margin)
+                for index = 1, 5 do row.cells[index]:Show() end
                 if result.profit and result.profit >= 0 then
-                    row.columns.profit:SetTextColor(0.35, 1, 0.35)
+                    row.cells[4]:SetTextColor(0.35, 1, 0.35)
                 else
-                    row.columns.profit:SetTextColor(1, 0.45, 0.35)
+                    row.cells[4]:SetTextColor(1, 0.45, 0.35)
                 end
                 row:EnableMouse(true)
             end
@@ -498,7 +568,7 @@ function AHT.UI:Refresh(skipCalculator)
         else
             row.info:SetText("")
             row.info:Hide()
-            for _, column in ipairs(TABLE_COLUMNS) do row.columns[column.key]:Hide() end
+            for index = 1, 5 do row.cells[index]:Hide() end
             row:Hide()
         end
     end
