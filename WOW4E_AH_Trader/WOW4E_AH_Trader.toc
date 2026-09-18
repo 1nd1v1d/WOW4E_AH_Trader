@@ -1,0 +1,22 @@
+## Interface: 16001
+## Title: WoW4E AH Trader
+## Notes: Auktionshaus-, Rezept- und Margenanalyse für WoW Forever
+## Author: TWOW_AHT
+## Version: 0.2.0-beta
+## SavedVariables: WOW4E_AHT_DB
+
+Core.lua
+Locales.lua
+Capabilities.lua
+Store.lua
+AuctionHouse.lua
+Recipes.lua
+Calculator.lua
+Reputation.lua
+Scanner.lua
+Mats.lua
+Buyer.lua
+Poster.lua
+Transmute.lua
+Diagnostics.lua
+UI.lua

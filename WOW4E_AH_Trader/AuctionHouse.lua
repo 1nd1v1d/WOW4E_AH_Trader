@@ -1,0 +1,257 @@
+local AHT = WOW4E_AHT
+
+AHT.AH = {
+    queue = {},
+    active = nil,
+    serial = 0,
+    pumpScheduled = false,
+    retryLimit = 2,
+    timeout = 15,
+}
+
+local THROTTLE_EVENTS = {
+    AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED = true,
+    AUCTION_HOUSE_THROTTLED_MESSAGE_QUEUED = true,
+    AUCTION_HOUSE_THROTTLED_MESSAGE_RESPONSE_RECEIVED = true,
+    AUCTION_HOUSE_THROTTLED_MESSAGE_SENT = true,
+    AUCTION_HOUSE_THROTTLED_SYSTEM_READY = true,
+}
+
+local function SafeCall(fn, ...)
+    if type(fn) ~= "function" then return false end
+    return pcall(fn, ...)
+end
+
+function AHT.AH:IsReady()
+    if C_AuctionHouse and C_AuctionHouse.IsThrottledMessageSystemReady then
+        local ok, ready = pcall(C_AuctionHouse.IsThrottledMessageSystemReady)
+        return ok and ready == true
+    end
+    return true
+end
+
+function AHT.AH:SchedulePump()
+    if self.pumpScheduled then return end
+    self.pumpScheduled = true
+    if C_Timer and C_Timer.After then
+        C_Timer.After(0.1, function()
+            self.pumpScheduled = false
+            self:Pump()
+        end)
+    else
+        self.pumpScheduled = false
+        self:Pump()
+    end
+end
+
+function AHT.AH:Search(target, callback)
+    if not target or not target.itemID then
+        if callback then callback({}, { error = "item_id_missing" }) end
+        return false
+    end
+    self.serial = self.serial + 1
+    table.insert(self.queue, {
+        id = self.serial,
+        target = target,
+        callback = callback,
+        retries = 0,
+    })
+    self:SchedulePump()
+    return true
+end
+
+function AHT.AH:Pump()
+    if self.active then return end
+    if not AHT.AHOpen then
+        while #self.queue > 0 do
+            local operation = table.remove(self.queue, 1)
+            if operation.callback then operation.callback({}, { error = "auction_house_closed" }) end
+        end
+        return
+    end
+    if not self:IsReady() then
+        self:SchedulePump()
+        return
+    end
+
+    local operation = table.remove(self.queue, 1)
+    if not operation then return end
+    local target = operation.target
+    operation.itemKey = target.itemKey or AHT:MakeItemKey(target.itemID)
+    operation.startedAt = GetTime and GetTime() or 0
+    operation.state = "sent"
+    self.active = operation
+    AHT.State.lastOperation = operation
+    AHT.State.status = "ah_query"
+
+    if not C_AuctionHouse or not C_AuctionHouse.SendSearchQuery then
+        self:Finish({}, { error = "send_search_query_missing" })
+        return
+    end
+
+    -- A valid modern sort descriptor is required by the client. We sort the
+    -- returned rows ourselves, so the commodity price order is sufficient for
+    -- both commodity and item searches.
+    local sorts = { sortOrder = 0, reverseSort = false }
+    local ok, err = SafeCall(C_AuctionHouse.SendSearchQuery, operation.itemKey, sorts, false)
+    if not ok then
+        self:Finish({}, { error = tostring(err or "send_search_query_failed") })
+    end
+end
+
+function AHT.AH:OnUpdate()
+    if not self.active or not self.active.startedAt then return end
+    local now = GetTime and GetTime() or 0
+    if now - self.active.startedAt < self.timeout then return end
+
+    local operation = self.active
+    self.active = nil
+    if operation.retries < self.retryLimit and AHT.AHOpen then
+        operation.retries = operation.retries + 1
+        table.insert(self.queue, 1, operation)
+        AHT.State.status = "ah_retry"
+        self:SchedulePump()
+    else
+        self:CallCallback(operation, {}, { error = "timeout", operationID = operation.id })
+        AHT.State.status = "ah_error"
+        self:SchedulePump()
+    end
+end
+
+local function IsOwned(info)
+    return info and (info.containsOwnerItem or info.containsAccountItem) == true
+end
+
+function AHT.AH:CollectItemResults(operation)
+    local results = {}
+    local totalQuantity = 0
+    local count = 0
+    if not C_AuctionHouse.GetNumItemSearchResults or not C_AuctionHouse.GetItemSearchResultInfo then
+        return results, { error = "item_result_api_missing" }
+    end
+
+    local total = C_AuctionHouse.GetNumItemSearchResults(operation.itemKey) or 0
+    for index = 1, total do
+        local info = C_AuctionHouse.GetItemSearchResultInfo(operation.itemKey, index)
+        if info then
+            local quantity = tonumber(info.quantity) or 0
+            local buyout = tonumber(info.buyoutAmount) or 0
+            if quantity > 0 and buyout > 0 and not IsOwned(info) then
+                count = count + 1
+                totalQuantity = totalQuantity + quantity
+                table.insert(results, {
+                    kind = "item",
+                    itemID = operation.target.itemID,
+                    itemKey = info.itemKey or operation.itemKey,
+                    itemLink = info.itemLink,
+                    auctionID = info.auctionID,
+                    quantity = quantity,
+                    buyoutAmount = buyout,
+                    unitPrice = math.floor(buyout / quantity),
+                    owners = info.owners,
+                    timeLeft = info.timeLeft,
+                    containsOwnerItem = info.containsOwnerItem,
+                })
+            end
+        end
+    end
+    table.sort(results, function(a, b) return a.unitPrice < b.unitPrice end)
+    return results, { kind = "item", listingCount = count, totalQuantity = totalQuantity }
+end
+
+function AHT.AH:CollectCommodityResults(operation)
+    local results = {}
+    local totalQuantity = 0
+    local count = 0
+    if not C_AuctionHouse.GetNumCommoditySearchResults or not C_AuctionHouse.GetCommoditySearchResultInfo then
+        return results, { error = "commodity_result_api_missing" }
+    end
+
+    local total = C_AuctionHouse.GetNumCommoditySearchResults(operation.target.itemID) or 0
+    for index = 1, total do
+        local info = C_AuctionHouse.GetCommoditySearchResultInfo(operation.target.itemID, index)
+        if info and (tonumber(info.quantity) or 0) > 0 and (tonumber(info.unitPrice) or 0) > 0 then
+            count = count + 1
+            totalQuantity = totalQuantity + info.quantity
+            table.insert(results, {
+                kind = "commodity",
+                itemID = operation.target.itemID,
+                auctionID = info.auctionID,
+                quantity = info.quantity,
+                unitPrice = info.unitPrice,
+                owners = info.owners,
+                timeLeftSeconds = info.timeLeftSeconds,
+                containsOwnerItem = info.containsOwnerItem,
+            })
+        end
+    end
+    table.sort(results, function(a, b) return a.unitPrice < b.unitPrice end)
+    return results, { kind = "commodity", listingCount = count, totalQuantity = totalQuantity }
+end
+
+function AHT.AH:CallCallback(operation, results, meta)
+    if operation and operation.callback then
+        local ok, err = pcall(operation.callback, results, meta or {})
+        if not ok then AHT:Print("Callback-Fehler: " .. tostring(err)) end
+    end
+end
+
+function AHT.AH:Finish(results, meta)
+    local operation = self.active
+    self.active = nil
+    if operation then
+        meta = meta or {}
+        meta.operationID = operation.id
+        self:CallCallback(operation, results, meta)
+    end
+    AHT.State.status = AHT.AHOpen and "ah_open" or "ready"
+    self:SchedulePump()
+end
+
+function AHT.AH:OnEvent(eventName, itemRef)
+    if THROTTLE_EVENTS[eventName] then
+        if eventName == "AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED" and self.active then
+            local operation = self.active
+            self.active = nil
+            if operation.retries < self.retryLimit then
+                operation.retries = operation.retries + 1
+                table.insert(self.queue, 1, operation)
+                self:SchedulePump()
+            else
+                self:CallCallback(operation, {}, { error = "throttled", operationID = operation.id })
+            end
+        elseif eventName == "AUCTION_HOUSE_THROTTLED_SYSTEM_READY" then
+            self:SchedulePump()
+        end
+        return
+    end
+
+    if not self.active then return end
+    if eventName == "ITEM_SEARCH_RESULTS_UPDATED" then
+        local operation = self.active
+        -- Other AH addons can receive the same global event. Only consume the
+        -- event when Blizzard supplied a matching item key; older clients may
+        -- omit the argument, in which case the timeout remains the fallback.
+        if itemRef and type(itemRef) == "table" and operation.itemKey and
+                AHT:ItemKeyString(itemRef) ~= AHT:ItemKeyString(operation.itemKey) then
+            return
+        end
+        local results, meta = self:CollectItemResults(operation)
+        self:Finish(results, meta)
+    elseif eventName == "COMMODITY_SEARCH_RESULTS_UPDATED" then
+        local operation = self.active
+        if itemRef and tonumber(itemRef) and tonumber(itemRef) ~= tonumber(operation.target.itemID) then
+            return
+        end
+        local results, meta = self:CollectCommodityResults(operation)
+        self:Finish(results, meta)
+    end
+end
+
+function AHT.AH:Cancel(reason)
+    self.queue = {}
+    local operation = self.active
+    self.active = nil
+    if operation then self:CallCallback(operation, {}, { error = reason or "cancelled" }) end
+    AHT.State.status = AHT.AHOpen and "ah_open" or "ready"
+end
