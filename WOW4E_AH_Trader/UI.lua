@@ -124,7 +124,10 @@ function AHT.UI:Create()
 
     self.close = Button(self.frame, nil, CLOSE or "Close", 70, 22)
     self.close:SetPoint("TOPRIGHT", -14, -12)
-    self.close:SetScript("OnClick", function() self.frame:Hide() end)
+    self.close:SetScript("OnClick", function()
+        self:HideRecipeContext()
+        self.frame:Hide()
+    end)
 
     self.status = Label(self.frame, "", 720)
     self.status:SetPoint("TOPLEFT", 18, -46)
@@ -251,10 +254,14 @@ function AHT.UI:CreateRows()
             if row.result and row.result.kind ~= "info" then self:ShowRecipeActions(row.result) end
         end)
         row:SetScript("OnEnter", function()
-            if row.result then row.bg:SetColorTexture(0.2, 0.2, 0.05, 0.75) end
+            if row.result then
+                row.bg:SetColorTexture(0.2, 0.2, 0.05, 0.75)
+                if row.result.kind ~= "info" then self:ShowRecipeContext(row.result, row) end
+            end
         end)
         row:SetScript("OnLeave", function()
             row.bg:SetColorTexture(index % 2 == 0 and 0.045 or 0.065, 0.032, 0.018, 0.82)
+            if self.recipeTooltipOwner == row then self:HideRecipeContext() end
         end)
         self.rows[index] = row
     end
@@ -312,6 +319,57 @@ function AHT.UI:SortResults(results)
         return av > bv
     end)
     return sorted
+end
+
+function AHT.UI:HideRecipeContext()
+    if self.recipeTooltipOwner and GameTooltip and GameTooltip.Hide then
+        GameTooltip:Hide()
+        self.recipeTooltipOwner = nil
+    end
+end
+
+function AHT.UI:ShowRecipeContext(result, owner)
+    if not GameTooltip or not GameTooltip.SetOwner or not GameTooltip.AddLine then return end
+    self:HideRecipeContext()
+    self.recipeTooltipOwner = owner
+    GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
+    GameTooltip:ClearLines()
+    GameTooltip:AddLine(result.name or "Rezept", 1, 0.84, 0.35)
+    GameTooltip:AddLine("Zutaten und Marktpreise", 0.8, 0.75, 0.55)
+    GameTooltip:AddLine(" ")
+
+    for _, reagent in ipairs(result.reagents or {}) do
+        local quantity = tonumber(reagent.quantity) or 1
+        local name = reagent.name or AHT:GetItemInfo(reagent.itemID) or tostring(reagent.itemID)
+        local current = AHT.Store and AHT.Store:GetPrice(reagent.itemID)
+        local average = AHT.Store and AHT.Store:RecencyAverage(reagent.itemID)
+        local currentText = current and AHT:FormatMoneyPlain(current) or "?"
+        local averageText = average and AHT:FormatMoneyPlain(average) or "?"
+        local currentTotal = current and AHT:FormatMoneyPlain(current * quantity) or "?"
+        local averageTotal = average and AHT:FormatMoneyPlain(average * quantity) or "?"
+        GameTooltip:AddLine(string.format("%dx %s", quantity, name), 1, 1, 1)
+        GameTooltip:AddDoubleLine(
+            "  aktuell/Stk " .. currentText .. " | Gesamt " .. currentTotal,
+            "Ø/Stk " .. averageText .. " | Gesamt " .. averageTotal,
+            0.78, 0.78, 0.78, 0.45, 1, 0.45
+        )
+    end
+
+    local output = result.output
+    if output and output.itemID then
+        local current = AHT.Store and AHT.Store:GetPrice(output.itemID)
+        local average = AHT.Store and AHT.Store:RecencyAverage(output.itemID)
+        GameTooltip:AddLine(" ")
+        GameTooltip:AddLine("Verkaufspreis des Ergebnisses", 0.8, 0.75, 0.55)
+        GameTooltip:AddDoubleLine("Aktueller Scan", current and AHT:FormatMoneyPlain(current) or "?", 0.78, 0.78, 0.78, 1, 1, 0.45)
+        GameTooltip:AddDoubleLine("Altersgewichteter Durchschnitt", average and AHT:FormatMoneyPlain(average) or "?", 0.78, 0.78, 0.78, 0.45, 1, 0.45)
+    end
+
+    local halfLife = AHT.DB and AHT.DB.settings and tonumber(AHT.DB.settings.averageHalfLifeSeconds) or 604800
+    local halfLifeDays = math.max(1, math.floor(halfLife / 86400 + 0.5))
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddLine(string.format("Ø = altersgewichtete Scans, Halbwertszeit %d Tage.", halfLifeDays), 0.62, 0.62, 0.62)
+    GameTooltip:Show()
 end
 
 function AHT.UI:RefreshStatus()
@@ -464,7 +522,9 @@ function AHT.UI:ShowAHButton()
     end
     self.ahButton:ClearAllPoints()
     if auctionHouse then
-        self.ahButton:SetPoint("TOPRIGHT", auctionHouse, "TOPRIGHT", -140, -8)
+        -- Keep the button below the AH title bar. The old top-right anchor
+        -- placed it behind the header/search controls in the Forever client.
+        self.ahButton:SetPoint("TOPLEFT", auctionHouse, "TOPLEFT", 92, -50)
         self.ahButton:SetFrameStrata(auctionHouse:GetFrameStrata() or "HIGH")
         self.ahButton:SetFrameLevel((auctionHouse:GetFrameLevel() or 1) + 10)
     else

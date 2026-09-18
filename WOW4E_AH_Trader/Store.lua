@@ -12,7 +12,10 @@ local DEFAULT_DB = {
     settings = {
         minMarginPercent = 10,
         dealThresholdPercent = 20,
-        historyLimit = 20,
+        historyLimit = 100,
+        -- Older market snapshots still matter, but their influence decays
+        -- exponentially. Seven days is the default half-life.
+        averageHalfLifeSeconds = 604800,
         -- Modern C_AuctionHouse APIs expect 1/2/3, not hours.
         defaultDuration = 2,
     },
@@ -36,6 +39,11 @@ end
 function AHT.Store:Load()
     WOW4E_AHT_DB = WOW4E_AHT_DB or {}
     CopyDefaults(WOW4E_AHT_DB, DEFAULT_DB)
+    -- Older beta builds kept only 20 snapshots. Move that implicit default
+    -- to the larger history window so the weighted average can use more scans.
+    if tonumber(WOW4E_AHT_DB.settings.historyLimit) == 20 then
+        WOW4E_AHT_DB.settings.historyLimit = 100
+    end
     if tonumber(WOW4E_AHT_DB.schemaVersion) ~= 1 then
         WOW4E_AHT_DB.schemaVersion = 1
     end
@@ -131,6 +139,35 @@ function AHT.Store:WeightedAverage(key)
     if weight > 0 then return math.floor(weightedTotal / weight) end
     if samples > 0 then return math.floor(simpleTotal / samples) end
     return nil
+end
+
+function AHT.Store:RecencyAverage(itemID, itemKey)
+    if not AHT.DB or not AHT.DB.history then return nil, 0 end
+    local key = self:MarketKey(itemID, itemKey)
+    local history = key and AHT.DB.history[key]
+    if (not history or #history == 0) and itemID and AHT.DB.byItemID then
+        local fallbackKey = AHT.DB.byItemID[tostring(itemID)]
+        history = fallbackKey and AHT.DB.history[fallbackKey]
+    end
+    if not history or #history == 0 then return nil, 0 end
+
+    local now = AHT:Now() or time()
+    local halfLife = tonumber(AHT.DB.settings.averageHalfLifeSeconds) or 604800
+    halfLife = math.max(1, halfLife)
+    local weightedTotal, weight, samples = 0, 0, 0
+    for _, entry in ipairs(history) do
+        local price = tonumber(entry.p)
+        if price and price > 0 then
+            local timestamp = tonumber(entry.t) or now
+            local age = math.max(0, now - timestamp)
+            local influence = 2 ^ (-age / halfLife)
+            weightedTotal = weightedTotal + price * influence
+            weight = weight + influence
+            samples = samples + 1
+        end
+    end
+    if weight == 0 then return nil, 0 end
+    return math.floor(weightedTotal / weight + 0.5), samples
 end
 
 function AHT.Store:IsDeal(key, currentPrice)
