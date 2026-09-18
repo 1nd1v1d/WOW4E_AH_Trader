@@ -11,6 +11,8 @@ local function MakeBackdrop(frame)
             insets = { left = 3, right = 3, top = 3, bottom = 3 },
         })
     end
+    if frame.SetBackdropColor then frame:SetBackdropColor(0.025, 0.018, 0.012, 0.94) end
+    if frame.SetBackdropBorderColor then frame:SetBackdropBorderColor(0.75, 0.48, 0.12, 0.95) end
 end
 
 local function Button(parent, name, text, width, height)
@@ -26,6 +28,43 @@ local function Label(parent, text, size)
     if size then font:SetWidth(size) end
     font:SetJustifyH("LEFT")
     return font
+end
+
+local TABLE_COLUMNS = {
+    { key = "name", label = "Rezept / Ergebnis", width = 310 },
+    { key = "ingredientCost", label = "Kosten", width = 95 },
+    { key = "salePrice", label = "Verkauf", width = 95 },
+    { key = "profit", label = "Gewinn", width = 100 },
+    { key = "margin", label = "Marge", width = 80 },
+}
+
+local TABLE_WIDTH = 700
+local ROW_HEIGHT = 23
+
+local function HeaderButton(parent, text, width)
+    local button = CreateFrame("Button", nil, parent)
+    button:SetSize(width, 24)
+    button.bg = button:CreateTexture(nil, "BACKGROUND")
+    button.bg:SetAllPoints()
+    button.bg:SetColorTexture(0.18, 0.11, 0.035, 0.95)
+    button.line = button:CreateTexture(nil, "BORDER")
+    button.line:SetPoint("BOTTOMLEFT")
+    button.line:SetPoint("BOTTOMRIGHT")
+    button.line:SetHeight(1)
+    button.line:SetColorTexture(0.85, 0.58, 0.18, 0.9)
+    button.label = button:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+    button.label:SetPoint("LEFT", 7, 0)
+    button.label:SetPoint("RIGHT", -7, 0)
+    button.label:SetJustifyH("LEFT")
+    button.label:SetTextColor(1, 0.84, 0.35)
+    button.label:SetText(text)
+    button:SetScript("OnEnter", function()
+        button.bg:SetColorTexture(0.3, 0.18, 0.05, 1)
+    end)
+    button:SetScript("OnLeave", function()
+        button.bg:SetColorTexture(0.18, 0.11, 0.035, 0.95)
+    end)
+    return button
 end
 
 local VIEW_INFO = {
@@ -67,7 +106,7 @@ function AHT.UI:Create()
     if self.frame then return end
     local template = BackdropTemplateMixin and "BackdropTemplate" or nil
     self.frame = CreateFrame("Frame", "WOW4E_AH_Trader_MainFrame", UIParent, template)
-    self.frame:SetSize(760, 560)
+    self.frame:SetSize(780, 600)
     self.frame:SetPoint("CENTER")
     self.frame:SetFrameStrata("DIALOG")
     self.frame:SetMovable(true)
@@ -78,9 +117,10 @@ function AHT.UI:Create()
     MakeBackdrop(self.frame)
     self.frame:Hide()
 
-    self.title = Label(self.frame, "WoW4E AH Trader", 500)
+    self.title = Label(self.frame, "WoW4E AH Trader  |  Marktübersicht", 560)
     self.title:SetPoint("TOPLEFT", 18, -16)
     self.title:SetFontObject("GameFontHighlightLarge")
+    self.title:SetTextColor(1, 0.84, 0.35)
 
     self.close = Button(self.frame, nil, CLOSE or "Close", 70, 22)
     self.close:SetPoint("TOPRIGHT", -14, -12)
@@ -88,13 +128,16 @@ function AHT.UI:Create()
 
     self.status = Label(self.frame, "", 720)
     self.status:SetPoint("TOPLEFT", 18, -46)
+    self.status:SetTextColor(0.95, 0.82, 0.35)
 
     self.viewTitle = Label(self.frame, "", 720)
-    self.viewTitle:SetPoint("TOPLEFT", 18, -101)
+    self.viewTitle:SetPoint("TOPLEFT", 18, -134)
     self.viewTitle:SetFontObject("GameFontHighlight")
+    self.viewTitle:SetTextColor(0.95, 0.78, 0.28)
 
     self.viewHelp = Label(self.frame, "", 720)
-    self.viewHelp:SetPoint("TOPLEFT", 18, -119)
+    self.viewHelp:SetPoint("TOPLEFT", 18, -151)
+    self.viewHelp:SetTextColor(0.72, 0.68, 0.58)
 
     self.scanButton = Button(self.frame, nil, "Scan", 100, 24)
     self.scanButton:SetPoint("TOPLEFT", 18, -70)
@@ -134,7 +177,7 @@ function AHT.UI:Create()
 
     self.materialInput = CreateFrame("EditBox", nil, self.frame, "InputBoxTemplate")
     self.materialInput:SetSize(190, 24)
-    self.materialInput:SetPoint("TOPRIGHT", -115, -70)
+    self.materialInput:SetPoint("TOPLEFT", 150, -101)
     self.materialInput:SetAutoFocus(false)
     self.materialInput:SetTextInsets(6, 6, 0, 0)
     local function AddMaterialFromInput(box)
@@ -152,12 +195,29 @@ function AHT.UI:Create()
         AddMaterialFromInput(self.materialInput)
     end)
 
+    self.materialLabel = Label(self.frame, "Material hinzufügen:", 125)
+    self.materialLabel:SetPoint("TOPLEFT", 18, -106)
+    self.materialLabel:SetTextColor(0.82, 0.75, 0.58)
+
+    self.tableHeader = CreateFrame("Frame", nil, self.frame)
+    self.tableHeader:SetSize(TABLE_WIDTH, 24)
+    self.tableHeader:SetPoint("TOPLEFT", 18, -174)
+    self.headers = {}
+    local offset = 0
+    for _, column in ipairs(TABLE_COLUMNS) do
+        local header = HeaderButton(self.tableHeader, column.label, column.width)
+        header:SetPoint("LEFT", offset, 0)
+        header:SetScript("OnClick", function() self:SetSort(column.key) end)
+        self.headers[column.key] = header
+        offset = offset + column.width
+    end
+
     local scrollTemplate = "UIPanelScrollFrameTemplate"
     self.scroll = CreateFrame("ScrollFrame", nil, self.frame, scrollTemplate)
-    self.scroll:SetPoint("TOPLEFT", 18, -140)
+    self.scroll:SetPoint("TOPLEFT", 18, -202)
     self.scroll:SetPoint("BOTTOMRIGHT", -34, 18)
     self.content = CreateFrame("Frame", nil, self.scroll)
-    self.content:SetSize(690, 420)
+    self.content:SetSize(TABLE_WIDTH, 420)
     self.scroll:SetScrollChild(self.content)
 
     self:CreateRows()
@@ -167,27 +227,91 @@ end
 function AHT.UI:CreateRows()
     for index = 1, 24 do
         local row = CreateFrame("Button", nil, self.content)
-        row:SetSize(690, 20)
-        row:SetPoint("TOPLEFT", 0, -((index - 1) * 21))
+        row:SetSize(TABLE_WIDTH, ROW_HEIGHT)
+        row:SetPoint("TOPLEFT", 0, -((index - 1) * ROW_HEIGHT))
         row:EnableMouse(true)
         row.bg = row:CreateTexture(nil, "BACKGROUND")
         row.bg:SetAllPoints()
-        row.bg:SetColorTexture(index % 2 == 0 and 0.08 or 0.12, 0.08, 0.04, 0.45)
-        row.text = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-        row.text:SetPoint("LEFT", 6, 0)
-        row.text:SetWidth(680)
-        row.text:SetJustifyH("LEFT")
+        row.bg:SetColorTexture(index % 2 == 0 and 0.045 or 0.065, 0.032, 0.018, 0.82)
+        row.info = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+        row.info:SetPoint("LEFT", 8, 0)
+        row.info:SetWidth(TABLE_WIDTH - 16)
+        row.info:SetJustifyH("LEFT")
+        row.columns = {}
+        local offset = 0
+        for _, column in ipairs(TABLE_COLUMNS) do
+            local text = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+            text:SetPoint("LEFT", offset + 6, 0)
+            text:SetWidth(column.width - 12)
+            text:SetJustifyH(column.key == "name" and "LEFT" or "RIGHT")
+            row.columns[column.key] = text
+            offset = offset + column.width
+        end
         row:SetScript("OnClick", function()
-            if row.result then self:ShowRecipeActions(row.result) end
+            if row.result and row.result.kind ~= "info" then self:ShowRecipeActions(row.result) end
         end)
         row:SetScript("OnEnter", function()
             if row.result then row.bg:SetColorTexture(0.2, 0.2, 0.05, 0.75) end
         end)
         row:SetScript("OnLeave", function()
-            row.bg:SetColorTexture(index % 2 == 0 and 0.08 or 0.12, 0.08, 0.04, 0.45)
+            row.bg:SetColorTexture(index % 2 == 0 and 0.045 or 0.065, 0.032, 0.018, 0.82)
         end)
         self.rows[index] = row
     end
+end
+
+function AHT.UI:SetSort(column)
+    if self.sortColumn == column then
+        self.sortAscending = not self.sortAscending
+    else
+        self.sortColumn = column
+        self.sortAscending = true
+    end
+    self:Refresh()
+end
+
+function AHT.UI:UpdateHeaders()
+    local tableMode = self.viewMode == "recipes" or self.viewMode == "transmute"
+    if not self.tableHeader then return end
+    self.scroll:ClearAllPoints()
+    self.scroll:SetPoint("TOPLEFT", 18, tableMode and -202 or -174)
+    self.scroll:SetPoint("BOTTOMRIGHT", -34, 18)
+    if not tableMode then
+        self.tableHeader:Hide()
+        return
+    end
+    self.tableHeader:Show()
+    for _, column in ipairs(TABLE_COLUMNS) do
+        local header = self.headers[column.key]
+        local marker = ""
+        if self.sortColumn == column.key then
+            marker = self.sortAscending and "  |cff66ff66▲|r" or "  |cffffaa44▼|r"
+        end
+        header.label:SetText(column.label .. marker)
+    end
+end
+
+function AHT.UI:SortResults(results)
+    local sorted = {}
+    for _, result in ipairs(results or {}) do table.insert(sorted, result) end
+    local key = self.sortColumn or "profit"
+    local ascending = self.sortAscending == true
+    table.sort(sorted, function(a, b)
+        local av, bv
+        if key == "name" then
+            av, bv = string.lower(tostring(a.name or "")), string.lower(tostring(b.name or ""))
+        else
+            av, bv = tonumber(a[key]), tonumber(b[key])
+        end
+        if av == nil or bv == nil then
+            if av == nil and bv == nil then return tostring(a.name or "") < tostring(b.name or "") end
+            return av ~= nil
+        end
+        if av == bv then return tostring(a.name or "") < tostring(b.name or "") end
+        if ascending then return av < bv end
+        return av > bv
+    end)
+    return sorted
 end
 
 function AHT.UI:RefreshStatus()
@@ -276,17 +400,21 @@ function AHT.UI:Refresh(skipCalculator)
         if not skipCalculator and AHT.Calculator then AHT.Calculator:Refresh() end
         results = mode == "transmute" and AHT.Calculator and AHT.Calculator:CalculateTransmutes() or (AHT.Calculator and AHT.Calculator.results)
         results = results or {}
+        results = self:SortResults(results)
         if #results == 0 then
             results = {{ kind = "info", text = mode == "transmute" and "Keine Transmutationsrezepte erkannt. Öffne das Berufsfenster und aktualisiere die Rezepte." or "Keine Rezepte erkannt. Öffne das Berufsfenster und aktualisiere die Rezepte." }}
         end
     end
-    self.content:SetHeight(math.max(420, #results * 21))
+    self:UpdateHeaders()
+    self.content:SetHeight(math.max(420, #results * ROW_HEIGHT))
     for index, row in ipairs(self.rows) do
         local result = results[index]
         row.result = result
         if result then
             if result.kind == "info" then
-                row.text:SetText(result.text or "")
+                row.info:SetText(result.text or "")
+                row.info:Show()
+                for _, column in ipairs(TABLE_COLUMNS) do row.columns[column.key]:Hide() end
                 row:EnableMouse(false)
             else
                 local profit = result.profit and AHT:FormatMoneyPlain(result.profit) or AHT.L.incomplete
@@ -294,12 +422,25 @@ function AHT.UI:Refresh(skipCalculator)
                 local cost = result.ingredientCost and AHT:FormatMoneyPlain(result.ingredientCost) or "?"
                 local sale = result.salePrice and AHT:FormatMoneyPlain(result.salePrice) or "?"
                 local prefix = result.isDeal and "★ " or ""
-                row.text:SetText(string.format("%s%-34s Kosten %8s | Verkauf %8s | Gewinn %8s | %s", prefix, result.name or "?", cost, sale, profit, margin))
+                row.info:Hide()
+                row.columns.name:SetText(prefix .. (result.name or "?"))
+                row.columns.ingredientCost:SetText(cost)
+                row.columns.salePrice:SetText(sale)
+                row.columns.profit:SetText(profit)
+                row.columns.margin:SetText(margin)
+                for _, column in ipairs(TABLE_COLUMNS) do row.columns[column.key]:Show() end
+                if result.profit and result.profit >= 0 then
+                    row.columns.profit:SetTextColor(0.35, 1, 0.35)
+                else
+                    row.columns.profit:SetTextColor(1, 0.45, 0.35)
+                end
                 row:EnableMouse(true)
             end
             row:Show()
         else
-            row.text:SetText("")
+            row.info:SetText("")
+            row.info:Hide()
+            for _, column in ipairs(TABLE_COLUMNS) do row.columns[column.key]:Hide() end
             row:Hide()
         end
     end
