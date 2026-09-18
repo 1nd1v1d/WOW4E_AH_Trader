@@ -45,6 +45,10 @@ foreach ($snippet in $requiredSnippets) {
     }
 }
 
+if ($source.Contains("AHT.Capabilities = c")) {
+    $errors.Add("Capabilities-Modul wird durch Probe-Ergebnis ersetzt")
+}
+
 if ($errors.Count -gt 0) {
     $errors | ForEach-Object { Write-Error $_ }
     exit 1

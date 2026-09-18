@@ -53,8 +53,13 @@ function AHT.Capabilities:Probe()
     c.functions["C_Reputation.GetWatchedFactionData"] = HasFunction(C_Reputation, "GetWatchedFactionData")
     c.functions["GetWatchedFactionInfo"] = type(GetWatchedFactionInfo) == "function"
 
-    AHT.Capabilities = c
-    return c
+    -- Keep the module table intact. Replacing AHT.Capabilities with the
+    -- probe result would discard Probe/Has/Summary and make the next call
+    -- such as AHT.Capabilities:Summary() fail during addon startup.
+    for key, value in pairs(c) do
+        self[key] = value
+    end
+    return self
 end
 
 function AHT.Capabilities:Has(name)
