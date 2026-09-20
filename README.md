@@ -6,18 +6,26 @@
 
 Ein eigenständiger Auction-House-, Rezept- und Margenanalysator für **World of Warcraft: Forever**. Das Addon ist aus dem ursprünglichen `TWOW_AH_Trader`-Projekt abgeleitet, verwendet aber eine getrennte moderne API-Schicht für die Forever-Beta.
 
-> Status: Beta-Port für Interface `16001` / Version `0.2.4-beta`. Rezept-, Commodity-Kauf- und Post-Events müssen weiterhin im echten Forever-Client verifiziert werden.
+> Status: Beta-Port für Interface `16001` / Version `0.3.2-beta`. Rezept-, Commodity-Kauf- und Post-Events müssen weiterhin im echten Forever-Client verifiziert werden.
 
 ## Funktionen
 
 - modernes `C_AuctionHouse`-Scanning mit Queue, Throttle-Handling, Timeout und Retry
 - Rezeptauswertung und Gewinn-/Margenberechnung
 - Materialüberwachung und begrenzte Marktpreis-Historie
+- robuste Marktwerte aus Preisverteilung, altersgewichteten Tagessnapshots, Preisband und Trend
+- Chancenansicht für unterbewertete AH-Angebote mit AH-Gebühr, Liquidität, ROI und NPC-Vergleich
 - Kaufpläne für Items und Commodities mit Preisprüfung und sichtbarer Bestätigung
+- berufsübergreifende Herstellungsaufträge mit Mengenempfehlung und Live-Marge
+- automatische gemeinsame Einkaufsliste für alle Rezeptzutaten
+- Taschen- und Bankbestand mit Reservierungen zwischen mehreren Herstellungsaufträgen
+- dauerhaftes Kaufprotokoll mit gekaufter Menge und Goldkosten pro Auftrag
 - Postpläne mit Bestands-, Deposit- und Preisprüfung
 - Runenstoff-/Ruf-Funktion für Hauptstadtfraktionen bis Ehrfürchtig
 - Transmutationsanalyse
 - Runtime-Diagnose über `/aht debug`
+- UI-Release mit fokussierter Hauptnavigation, globaler Suche, Profitfilter und gespeicherter Fenster-/Sortierposition
+- dynamische Tabellenzeilen ohne künstliche 24-Zeilen-Grenze
 
 ## Installation
 
@@ -40,11 +48,32 @@ Danach im Client `/reload` ausführen oder den Client neu starten.
 | `/aht mats remove <Item-Link>` | Material entfernen |
 | `/aht ruf` | aktuellen Ruf-/Runenstoffbedarf ausgeben |
 | `/aht transmute` | Transmutationsmargen ausgeben |
+| `/aht orders` | aktive Herstellungsaufträge und reservierte Materialien anzeigen |
+| `/aht chancen` | belastbare AH-Chancen und Netto-ROI anzeigen |
 | `/aht stop` | laufende Operationen abbrechen |
 | `/aht debug` | Client- und API-Diagnose ausgeben |
 | `/aht reset` | gespeicherte Marktdaten löschen |
 
-Beim Öffnen des Auktionshauses erscheint ein `AH Trader`-Button direkt unterhalb der AH-Titelleiste. Im Hauptfenster gibt es getrennte Ansichten für `Rezepte`, `Transmute`, `Materialien`, `Ruf` und `Debug`; Ergebnislisten werden dort angezeigt und nicht mehr als mehrzeilige Chat-Ausgabe ausgegeben. Die Rezept-/Transmute-Liste besitzt Spaltenköpfe für Ergebnis, Kosten, Verkauf, Gewinn und Marge; jeder Kopf sortiert auf Klick auf- bzw. absteigend. Beim Überfahren eines Rezepts zeigt ein Kontextfenster die Zutaten, aktuellen Scanpreise und den altersgewichteten Durchschnittspreis. Dieser Durchschnitt nutzt standardmäßig eine Halbwertszeit von sieben Tagen, sodass ältere Scans weniger Einfluss haben. Materialien können über Item-Link oder Item-ID eingetragen werden.
+Beim Öffnen des Auktionshauses erscheint ein `AH Trader`-Button direkt unterhalb der AH-Titelleiste. Die Hauptnavigation fokussiert `Herstellen`, `Markt`, `Aufträge` und `Chancen`; `Ruf` und `Diagnose` liegen unter `Mehr`, damit der Arbeitsbereich nicht mit seltenen Funktionen überladen wird. Die Suche filtert die sichtbare Liste nach Name, Item-ID und Beruf; `Nur profitabel` grenzt zusätzlich auf positive Chancen ein. Jede sichtbare Tabellenüberschrift ist anklickbar und sortiert ihre Spalte. Fensterposition, Größe, Ansicht und Sortierung werden gespeichert. Die Tabellenzeilen wachsen dynamisch mit der Ergebnisliste.
+
+Beim Überfahren eines Rezepts zeigt ein Kontextfenster die Zutaten, aktuellen Scanpreise, robusten Marktwert, Bestand, Reservierungen und den altersgewichteten Durchschnittspreis. Der robuste Marktwert basiert auf Preisverteilung und Tagessnapshots; ältere Tage verlieren standardmäßig mit einer Halbwertszeit von sieben Tagen an Einfluss. Materialien zeigen zusätzlich Preisband und Trend und bieten per Klick einen erneuten Scan oder das Entfernen aus der Überwachung.
+
+Die Ansicht `Chancen` meldet nur Angebote mit ausreichender Historie. Sie zieht die konfigurierbare AH-Gebühr ab, zeigt den erwarteten Netto-Gewinn, ROI, verfügbare Menge, Listing-Anzahl und ein Vertrauensniveau. Wenn der Forever-Client einen Händlerverkaufspreis liefert, wird auch der NPC-Verkauf als Alternative angezeigt. Ein Klick kann das Item in die Materialüberwachung übernehmen oder einen Live-Scan anstoßen.
+
+## Herstellungsaufträge und AutoBuy
+
+`Trank` steht im Addon für jedes herstellbare Ergebnis eines erkannten Berufsrezepts. Der Forever-Port speichert Rezepte berufsübergreifend: Jeder Beruf muss mindestens einmal geöffnet werden, damit seine gelernten Rezepte eingelesen werden.
+
+Die Rezeptliste zeigt eine konservative Mengenempfehlung sowie die erwartete Marge. Ein Klick auf ein Rezept öffnet den Herstellungs- und Einkaufsplan. Dort wird die gewünschte Anzahl an Herstellvorgängen eingegeben. Das Addon:
+
+- multipliziert sämtliche Zutaten mit der gewählten Anzahl,
+- zieht verfügbare Gegenstände aus Taschen und persönlicher beziehungsweise Reagenzienbank ab,
+- berücksichtigt Materialreservierungen anderer aktiver Aufträge,
+- prüft die fehlenden Mengen und Preisstufen live im Forever-Auktionshaus,
+- kauft die Zutaten in einer geführten Warteschlange,
+- speichert gekaufte Menge und Kosten beim zugehörigen Auftrag.
+
+Aktive Aufträge bleiben in der Ansicht `Aufträge` erhalten. `Hergestellt` gibt ihre Materialreservierungen frei; `Stornieren` verwirft den Auftrag ebenfalls. Bankbestände werden beim Öffnen der Bank aktualisiert. Ist noch kein Banksnapshot verfügbar, zeigt das Addon den Bankwert als unbekannt an.
 
 ## Ruf- und Runenstoffanalyse
 
@@ -54,7 +83,7 @@ Runenstoff wird über Item-ID `14047` erkannt. Der Preis wird bevorzugt als gewi
 
 ## Sicherheitsmodell
 
-Alle AH-Anfragen laufen über eine zentrale Queue. Käufe und Posts werden niemals automatisch ohne sichtbare Benutzeraktion ausgeführt. Commodity-Käufe erhalten nach der Preisabfrage eine zusätzliche finale Bestätigung. Beim Posten werden Bestand, Preis, Laufzeit und Deposit unmittelbar vor dem API-Aufruf erneut geprüft.
+Alle AH-Anfragen laufen über eine zentrale Queue. Der AutoBuy übernimmt Suche, Mengenplanung, Reservierungen und den Wechsel zur nächsten Zutat. Forever verlangt für den finalen Commodity-Preis weiterhin eine sichtbare Bestätigung; Itemauktionen werden ebenfalls nicht ohne Benutzeraktion ausgelöst. Preis und Menge werden unmittelbar vor jedem Kauf erneut geprüft. Beim Posten werden Bestand, Preis, Laufzeit und Deposit unmittelbar vor dem API-Aufruf erneut geprüft.
 
 ## Projektstruktur
 
@@ -63,6 +92,9 @@ WOW4E_AH_Trader/
 ├── AuctionHouse.lua       moderne AH-Abstraktion und Queue
 ├── Buyer.lua              Kaufplan und Bestätigung
 ├── Calculator.lua         Kosten-, Gewinn- und Margenberechnung
+├── Opportunities.lua      Deal-Finder mit Risiko-, Liquiditäts- und ROI-Bewertung
+├── Inventory.lua          Taschen-, Bank- und Reagenzienbankbestand
+├── Production.lua         Herstellungsaufträge, Reservierungen und AutoBuy-Queue
 ├── Poster.lua              kontrolliertes Posten
 ├── Recipes.lua             Rezeptdaten aus C_TradeSkillUI
 ├── Reputation.lua          Ruf-/Runenstoffanalyse
@@ -75,10 +107,11 @@ WOW4E_AH_Trader/
 
 ## Prüfung
 
-Der statische Quell-Audit prüft TOC-Dateien, moderne AH-Verträge, Ruf-Funktion und den Ausschluss der alten Legacy-AH-Symbole:
+Der statische Quell-Audit prüft TOC-Dateien, moderne AH-Verträge, Marktstatistik, Chancenansicht, Ruf-Funktion und den Ausschluss der alten Legacy-AH-Symbole:
 
 ```powershell
 .\WOW4E_AH_Trader\Tests\SourceAudit.ps1
+node .\WOW4E_AH_Trader\Tests\lua-balance.mjs
 ```
 
 Ein erfolgreicher Audit ersetzt keinen echten Test im Forever-Client. Für die erste Ingame-Prüfung empfiehlt sich ein kleiner Scan sowie ein unkritischer Kauf-/Postversuch mit niedriger Menge.

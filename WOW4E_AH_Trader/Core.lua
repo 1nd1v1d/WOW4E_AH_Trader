@@ -2,7 +2,7 @@ WOW4E_AHT = WOW4E_AHT or {}
 local AHT = WOW4E_AHT
 
 AHT.ADDON_NAME = "WOW4E_AH_Trader"
-AHT.VERSION = "0.2.4-beta"
+AHT.VERSION = "0.3.2-beta"
 AHT.AHOpen = false
 AHT.Initialized = false
 AHT.State = {
@@ -22,6 +22,11 @@ local EVENTS = {
     "PLAYER_LOGIN",
     "PLAYER_ENTERING_WORLD",
     "PLAYER_LOGOUT",
+    "BAG_UPDATE_DELAYED",
+    "BANKFRAME_OPENED",
+    "BANKFRAME_CLOSED",
+    "PLAYERBANKSLOTS_CHANGED",
+    "PLAYERREAGENTBANKSLOTS_CHANGED",
     "AUCTION_HOUSE_SHOW",
     "AUCTION_HOUSE_CLOSED",
     "TRADE_SKILL_SHOW",
@@ -126,6 +131,8 @@ function AHT:Initialize()
 
     if self.Store then self.Store:Load() end
     if self.Capabilities then self.Capabilities:Probe() end
+    if self.Inventory then self.Inventory:Initialize() end
+    if self.Production then self.Production:Initialize() end
     if self.UI then self.UI:Create() end
     if self.Reputation then self.Reputation:Initialize() end
 
@@ -167,7 +174,9 @@ function AHT:OnEvent(eventName, ...)
     end
 
     if self.AH then self.AH:OnEvent(eventName, ...) end
+    if self.Inventory then self.Inventory:OnEvent(eventName, ...) end
     if self.Buyer then self.Buyer:OnEvent(eventName, ...) end
+    if self.Production then self.Production:OnEvent(eventName, ...) end
     if self.Poster then self.Poster:OnEvent(eventName, ...) end
     if self.Reputation then self.Reputation:OnEvent(eventName, ...) end
 
@@ -184,6 +193,7 @@ end)
 
 AHT.EventFrame:SetScript("OnUpdate", function(_, elapsed)
     if AHT.AH and AHT.AH.OnUpdate then AHT.AH:OnUpdate(elapsed) end
+    if AHT.Buyer and AHT.Buyer.OnUpdate then AHT.Buyer:OnUpdate(elapsed) end
 end)
 
 SLASH_WOW4E_AHT1 = "/aht"
@@ -216,6 +226,10 @@ SlashCmdList.WOW4E_AHT = function(message)
         end
     elseif command == "transmute" then
         if AHT.UI then AHT.UI:SetView("transmute") end
+    elseif command == "orders" or command == "auftraege" then
+        if AHT.UI then AHT.UI:SetView("orders") end
+    elseif command == "deals" or command == "chancen" or command == "opportunities" then
+        if AHT.UI then AHT.UI:SetView("opportunities") end
     elseif command == "ruf" or command == "rep" or command == "reputation" then
         if AHT.UI then AHT.UI:SetView("reputation") end
     elseif command == "reset" then
@@ -226,6 +240,6 @@ SlashCmdList.WOW4E_AHT = function(message)
     elseif command == "post" then
         AHT:Print(AHT.L and AHT.L.postHint or "Posten erfolgt über eine sichtbare Vorschau im Addon.")
     else
-        AHT:Print("/aht | scan | stop | recipes | mats add <Item-Link> | mats remove <Item-Link> | transmute | ruf | reset | debug")
+        AHT:Print("/aht | scan | stop | recipes | mats add <Item-Link> | mats remove <Item-Link> | transmute | orders | chancen | ruf | reset | debug")
     end
 end

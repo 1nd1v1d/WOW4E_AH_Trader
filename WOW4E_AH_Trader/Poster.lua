@@ -16,6 +16,28 @@ function AHT.Poster:FindItem(itemID)
     return nil
 end
 
+function AHT.Poster:RecommendPrice(result)
+    local itemID = result and result.output and result.output.itemID
+    if not itemID then return nil end
+    local snapshot = AHT.Store and AHT.Store:GetMarketSnapshot(itemID) or nil
+    local market = snapshot and snapshot.marketValue
+    local current = snapshot and snapshot.currentPrice
+    local recommended = market or current or result.expectedSalePrice or result.salePrice
+    if recommended and recommended > 1 and current and current < recommended then
+        -- Undercut only when the current market is already below the robust
+        -- value; otherwise keep the market value as the economic target.
+        recommended = math.max(current, math.floor(recommended - 1))
+    end
+    return {
+        currentPrice = current,
+        marketValue = market,
+        recommendedPrice = recommended,
+        p25 = snapshot and snapshot.p25,
+        p75 = snapshot and snapshot.p75,
+        samples = snapshot and snapshot.marketSamples or 0,
+    }
+end
+
 function AHT.Poster:BuildPlan(result, quantity, duration, unitPrice)
     if not result or not result.output or not result.output.itemID then return nil, "output_missing" end
     local location, available = self:FindItem(result.output.itemID)
@@ -23,7 +45,7 @@ function AHT.Poster:BuildPlan(result, quantity, duration, unitPrice)
     quantity = math.min(quantity or 1, available or 1)
     if quantity <= 0 then return nil, "quantity_missing" end
     duration = AHT:NormalizeAuctionDuration(duration or (AHT.DB.settings and AHT.DB.settings.defaultDuration) or 2)
-    unitPrice = unitPrice or result.salePrice
+    unitPrice = unitPrice or result.expectedSalePrice or result.salePrice
     if not unitPrice or unitPrice <= 0 then return nil, "price_missing" end
 
     local isCommodity = false

@@ -1,6 +1,6 @@
 local AHT = WOW4E_AHT
 
-AHT.Buyer = { pending = nil }
+AHT.Buyer = { pending = nil, timeout = 30 }
 
 local function SortedOffers(results)
     local offers = {}
@@ -12,7 +12,7 @@ local function SortedOffers(results)
 end
 
 function AHT.Buyer:BuildPlan(results, quantity, maxUnitPrice)
-    local plan = { lines = {}, quantity = quantity, total = 0, missing = quantity }
+    local plan = { lines = {}, quantity = quantity, total = 0, missing = quantity, maxUnitPrice = maxUnitPrice, plannedQuantity = 0 }
     for _, offer in ipairs(SortedOffers(results)) do
         if offer.unitPrice <= maxUnitPrice and plan.missing > 0 then
             local take = math.min(plan.missing, offer.quantity)
@@ -22,6 +22,7 @@ function AHT.Buyer:BuildPlan(results, quantity, maxUnitPrice)
             end
             table.insert(plan.lines, { offer = offer, quantity = take, total = take * offer.unitPrice })
             plan.total = plan.total + take * offer.unitPrice
+            plan.plannedQuantity = plan.plannedQuantity + take
             plan.missing = math.max(0, plan.missing - take)
         end
     end
@@ -48,8 +49,18 @@ function AHT.Buyer:Preview(target, quantity, callback)
 end
 
 function AHT.Buyer:Notify(state, data)
-    if self.pending and self.pending.callback then
-        local ok, err = pcall(self.pending.callback, state, data)
+    local operation = self.pending
+    if operation and operation.callback then
+        local ok, err = pcall(operation.callback, state, data)
+        if not ok then AHT:Print("Kauf-Callback-Fehler: " .. tostring(err)) end
+    end
+end
+
+function AHT.Buyer:Finish(state, data)
+    local operation = self.pending
+    self.pending = nil
+    if operation and operation.callback then
+        local ok, err = pcall(operation.callback, state, data)
         if not ok then AHT:Print("Kauf-Callback-Fehler: " .. tostring(err)) end
     end
 end
@@ -74,20 +85,21 @@ function AHT.Buyer:Confirm(plan, callback)
         if not self.pending then return end
         if meta.error then
             AHT:Print("Kauf abgebrochen: " .. meta.error)
-            self:Notify("error", meta.error)
-            self.pending = nil
+            self:Finish("error", meta.error)
             return
         end
 
-        local refreshed = self:BuildPlan(results, plan.quantity, plan.lines[1] and plan.lines[1].offer.unitPrice or 0)
+        local maxUnitPrice = tonumber(plan.maxUnitPrice) or (plan.lines[1] and plan.lines[1].offer.unitPrice) or 0
+        local refreshed = self:BuildPlan(results, plan.quantity, maxUnitPrice)
         if refreshed.missing > 0 or #refreshed.lines == 0 then
             AHT:Print("Kauf abgebrochen: Preis oder Menge hat sich geändert.")
-            self:Notify("error", "price_or_quantity_changed")
-            self.pending = nil
+            self:Finish("error", "price_or_quantity_changed")
             return
         end
         refreshed.target = plan.target
         refreshed.results = results
+        refreshed.maxUnitPrice = maxUnitPrice
+        refreshed.requirementItemID = plan.requirementItemID
         self.pending.plan = refreshed
         self:Execute(refreshed)
     end)
@@ -97,8 +109,12 @@ end
 function AHT.Buyer:Execute(plan)
     local first = plan.lines[1] and plan.lines[1].offer
     if not first then
-        self:Notify("error", "offer_missing")
-        self.pending = nil
+        self:Finish("error", "offer_missing")
+        return
+    end
+    if GetMoney and tonumber(plan.total) and GetMoney() < plan.total then
+        AHT:Print("Kauf abgebrochen: nicht genug Gold.")
+        self:Finish("error", "not_enough_money")
         return
     end
 
@@ -110,34 +126,33 @@ function AHT.Buyer:Execute(plan)
         self.pending.quantity = quantity
         if not C_AuctionHouse.StartCommoditiesPurchase then
             AHT:Print("Commodity-Kauf-API fehlt.")
-            self:Notify("error", "commodity_purchase_api_missing")
-            self.pending = nil
+            self:Finish("error", "commodity_purchase_api_missing")
             return
         end
         local ok, err = pcall(C_AuctionHouse.StartCommoditiesPurchase, first.itemID, quantity)
         if not ok then
             AHT:Print("Commodity-Kauf fehlgeschlagen: " .. tostring(err))
-            self:Notify("error", tostring(err or "commodity_purchase_failed"))
-            self.pending = nil
+            self:Finish("error", tostring(err or "commodity_purchase_failed"))
         end
     else
         local totalPrice = first.buyoutAmount
         if not first.auctionID or not totalPrice or not C_AuctionHouse.PlaceBid then
             AHT:Print("Item-Kaufdaten unvollständig.")
-            self:Notify("error", "item_purchase_data_missing")
-            self.pending = nil
+            self:Finish("error", "item_purchase_data_missing")
             return
         end
         self.pending.state = "placing"
+        self.pending.purchaseQuantity = tonumber(first.quantity) or 0
+        self.pending.totalPrice = totalPrice
+        self.pending.auctionID = first.auctionID
         local ok, err = pcall(C_AuctionHouse.PlaceBid, first.auctionID, totalPrice)
         if not ok then
             AHT:Print("Item-Kauf fehlgeschlagen: " .. tostring(err))
-            self:Notify("error", tostring(err or "item_purchase_failed"))
-            self.pending = nil
+            self:Finish("error", tostring(err or "item_purchase_failed"))
         else
             AHT:Print("Kauf ausgelöst: " .. AHT:FormatMoney(totalPrice))
+            self.pending.state = "awaiting_completion"
             self:Notify("submitted", plan)
-            self.pending = nil
         end
     end
 end
@@ -146,20 +161,20 @@ function AHT.Buyer:ConfirmCommodity()
     local pending = self.pending
     if not pending or pending.state ~= "awaiting_user_confirmation" then return false end
     if not C_AuctionHouse or not C_AuctionHouse.ConfirmCommoditiesPurchase then
-        self:Notify("error", "commodity_confirm_api_missing")
-        self.pending = nil
+        self:Finish("error", "commodity_confirm_api_missing")
         return false
     end
     local ok, err = pcall(C_AuctionHouse.ConfirmCommoditiesPurchase, pending.itemID, pending.quantity)
     if not ok then
         AHT:Print("Commodity-Bestätigung fehlgeschlagen: " .. tostring(err))
-        self:Notify("error", tostring(err or "commodity_confirm_failed"))
-        self.pending = nil
+        self:Finish("error", tostring(err or "commodity_confirm_failed"))
         return false
     end
     AHT:Print("Commodity-Kauf ausgelöst: " .. AHT:FormatMoney(pending.totalPrice))
+    pending.state = "awaiting_completion"
+    pending.purchaseQuantity = pending.quantity
+    pending.startedAt = GetTime and GetTime() or pending.startedAt
     self:Notify("submitted", pending.plan)
-    self.pending = nil
     return true
 end
 
@@ -175,8 +190,7 @@ function AHT.Buyer:OnEvent(eventName, ...)
             if C_AuctionHouse.CancelCommoditiesPurchase then
                 pcall(C_AuctionHouse.CancelCommoditiesPurchase)
             end
-            self:Notify("error", "updated_price_exceeds_plan")
-            self.pending = nil
+            self:Finish("error", "updated_price_exceeds_plan")
             return
         end
         self.pending.state = "awaiting_user_confirmation"
@@ -188,17 +202,31 @@ function AHT.Buyer:OnEvent(eventName, ...)
             pcall(C_AuctionHouse.CancelCommoditiesPurchase)
         end
         AHT:Print("Kauf abgebrochen: kein aktueller Commodity-Preis verfügbar.")
-        self:Notify("error", "commodity_price_unavailable")
-        self.pending = nil
+        self:Finish("error", "commodity_price_unavailable")
     elseif eventName == "COMMODITY_PURCHASE_FAILED" or eventName == "AUCTION_HOUSE_PURCHASE_FAILED" then
         AHT:Print("Kauf vom Client abgelehnt.")
-        self:Notify("error", "purchase_failed")
-        self.pending = nil
+        self:Finish("error", "purchase_failed")
     elseif eventName == "COMMODITY_PURCHASE_SUCCEEDED" or eventName == "AUCTION_HOUSE_PURCHASE_COMPLETED" then
         AHT:Print("Kauf abgeschlossen.")
-        self:Notify("completed", self.pending.plan)
-        self.pending = nil
+        local pending = self.pending
+        local completed = pending.plan
+        completed.purchasedQuantity = tonumber(pending.purchaseQuantity) or tonumber(pending.quantity) or tonumber(completed.plannedQuantity) or 0
+        completed.actualTotal = tonumber(pending.totalPrice) or tonumber(completed.total) or 0
+        self:Finish("completed", completed)
     end
+end
+
+function AHT.Buyer:OnUpdate()
+    if not self.pending or not self.pending.startedAt then return end
+    local now = GetTime and GetTime() or 0
+    if now - self.pending.startedAt < self.timeout then return end
+    if self.pending.state == "awaiting_price" or self.pending.state == "awaiting_user_confirmation" then
+        if C_AuctionHouse and C_AuctionHouse.CancelCommoditiesPurchase then
+            pcall(C_AuctionHouse.CancelCommoditiesPurchase)
+        end
+    end
+    AHT:Print("Kauf abgebrochen: Zeitüberschreitung.")
+    self:Finish("error", "purchase_timeout")
 end
 
 function AHT.Buyer:Cancel(reason)
@@ -209,7 +237,8 @@ function AHT.Buyer:Cancel(reason)
             end
         end
         AHT:Print("Kauf abgebrochen: " .. tostring(reason or "cancelled"))
-        self:Notify("error", reason or "cancelled")
+        self:Finish("error", reason or "cancelled")
+        return
     end
     self.pending = nil
 end

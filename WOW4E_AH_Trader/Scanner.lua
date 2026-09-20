@@ -68,6 +68,7 @@ function AHT.Scanner:Next()
                 minPrice = minPrice,
                 totalQuantity = totalQuantity,
                 listingCount = meta.listingCount or #results,
+                prices = meta.prices,
             })
         end
         self.completed = self.completed + 1

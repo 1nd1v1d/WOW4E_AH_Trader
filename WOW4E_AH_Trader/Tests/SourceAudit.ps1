@@ -13,6 +13,12 @@ foreach ($entry in $tocEntries) {
 }
 
 $source = ($luaFiles | ForEach-Object { Get-Content $_.FullName -Raw }) -join "`n"
+$tocVersion = (Get-Content $tocPath | Where-Object { $_ -like "## Version:*" } | Select-Object -First 1) -replace '^## Version:\s*', ''
+$coreSource = Get-Content (Join-Path $addonRoot "Core.lua") -Raw
+$coreVersion = [regex]::Match($coreSource, 'AHT\.VERSION\s*=\s*"([^"]+)"').Groups[1].Value
+if (-not $tocVersion -or $tocVersion -ne $coreVersion) {
+    $errors.Add("Versionsabweichung: TOC=$tocVersion Core=$coreVersion")
+}
 $legacySymbols = @(
     "QueryAuctionItems",
     "GetNumAuctionItems",
@@ -30,14 +36,26 @@ $requiredSnippets = @(
     "C_AuctionHouse.SendSearchQuery",
     "C_AuctionHouse.GetItemSearchResultInfo",
     "C_AuctionHouse.GetCommoditySearchResultInfo",
-    "C_AuctionHouse.PostItem",
-    "C_AuctionHouse.PostCommodity",
-    "NormalizeAuctionDuration",
-    "awaiting_user_confirmation",
-    "ConfirmCommodity",
-    "GetWatchedFactionData",
-    "CalculateDonations",
-    "runeclothItemID = 14047"
+    "C_AuctionHouse.StartCommoditiesPurchase",
+    "C_AuctionHouse.ConfirmCommoditiesPurchase",
+    'pending.state = "awaiting_completion"',
+    "AHT.Inventory:GetCount",
+    "BANKFRAME_OPENED",
+    "AHT.Production:CreateOrder",
+    "AHT.Production:GetReserved",
+    "AHT.Production:PreviewOrder",
+    "AHT.Production:ConfirmCurrentCommodity",
+    "ready_to_craft",
+    "production.purchases",
+    "GetBaseProfessionInfo",
+    "CalculatePriceStats",
+    "dailyHistory",
+    "AHT.Opportunities:Build",
+    "marketValue",
+    "function AHT.UI:EnsureRows",
+    "function AHT.UI:MatchesFilter",
+    "self.moreMenu",
+    "AHT.DB.ui.viewMode"
 )
 foreach ($snippet in $requiredSnippets) {
     if (-not $source.Contains($snippet)) {
@@ -49,9 +67,21 @@ if ($source.Contains("AHT.Capabilities = c")) {
     $errors.Add("Capabilities-Modul wird durch Probe-Ergebnis ersetzt")
 }
 
+$inventoryIndex = [Array]::IndexOf($tocEntries, "Inventory.lua")
+$calculatorIndex = [Array]::IndexOf($tocEntries, "Calculator.lua")
+$buyerIndex = [Array]::IndexOf($tocEntries, "Buyer.lua")
+$productionIndex = [Array]::IndexOf($tocEntries, "Production.lua")
+$uiIndex = [Array]::IndexOf($tocEntries, "UI.lua")
+if ($inventoryIndex -lt 0 -or $inventoryIndex -gt $calculatorIndex) {
+    $errors.Add("Inventory.lua muss vor Calculator.lua geladen werden")
+}
+if ($productionIndex -lt $buyerIndex -or $productionIndex -gt $uiIndex) {
+    $errors.Add("Production.lua muss nach Buyer.lua und vor UI.lua geladen werden")
+}
+
 if ($errors.Count -gt 0) {
     $errors | ForEach-Object { Write-Error $_ }
     exit 1
 }
 
-Write-Output ("Source audit passed: {0} Lua-Dateien, {1} TOC-Einträge, Legacy-AH-Symbolscan sauber." -f $luaFiles.Count, $tocEntries.Count)
+Write-Output ("Source audit passed: {0} Lua-Dateien, {1} TOC-Einträge, Forever-AH- und Produktionsverträge vorhanden." -f $luaFiles.Count, $tocEntries.Count)

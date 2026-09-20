@@ -2,7 +2,7 @@
 ## Title: WoW4E AH Trader
 ## Notes: Auktionshaus-, Rezept- und Margenanalyse für WoW Forever
 ## Author: TWOW_AHT
-## Version: 0.2.4-beta
+## Version: 0.3.2-beta
 ## IconTexture: Interface\AddOns\WOW4E_AH_Trader\Assets\WOW4E_AH_Trader-logo
 ## SavedVariables: WOW4E_AHT_DB
 
@@ -10,13 +10,16 @@ Core.lua
 Locales.lua
 Capabilities.lua
 Store.lua
+Inventory.lua
 AuctionHouse.lua
 Recipes.lua
 Calculator.lua
+Opportunities.lua
 Reputation.lua
 Scanner.lua
 Mats.lua
 Buyer.lua
+Production.lua
 Poster.lua
 Transmute.lua
 Diagnostics.lua

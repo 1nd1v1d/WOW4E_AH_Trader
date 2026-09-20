@@ -124,6 +124,7 @@ end
 
 function AHT.AH:CollectItemResults(operation)
     local results = {}
+    local prices = {}
     local totalQuantity = 0
     local count = 0
     if not C_AuctionHouse.GetNumItemSearchResults or not C_AuctionHouse.GetItemSearchResultInfo then
@@ -139,6 +140,7 @@ function AHT.AH:CollectItemResults(operation)
             if quantity > 0 and buyout > 0 and not IsOwned(info) then
                 count = count + 1
                 totalQuantity = totalQuantity + quantity
+                table.insert(prices, math.floor(buyout / quantity))
                 table.insert(results, {
                     kind = "item",
                     itemID = operation.target.itemID,
@@ -156,11 +158,12 @@ function AHT.AH:CollectItemResults(operation)
         end
     end
     table.sort(results, function(a, b) return a.unitPrice < b.unitPrice end)
-    return results, { kind = "item", listingCount = count, totalQuantity = totalQuantity }
+    return results, { kind = "item", listingCount = count, totalQuantity = totalQuantity, prices = prices }
 end
 
 function AHT.AH:CollectCommodityResults(operation)
     local results = {}
+    local prices = {}
     local totalQuantity = 0
     local count = 0
     if not C_AuctionHouse.GetNumCommoditySearchResults or not C_AuctionHouse.GetCommoditySearchResultInfo then
@@ -173,6 +176,7 @@ function AHT.AH:CollectCommodityResults(operation)
         if info and (tonumber(info.quantity) or 0) > 0 and (tonumber(info.unitPrice) or 0) > 0 then
             count = count + 1
             totalQuantity = totalQuantity + info.quantity
+            table.insert(prices, info.unitPrice)
             table.insert(results, {
                 kind = "commodity",
                 itemID = operation.target.itemID,
@@ -186,7 +190,7 @@ function AHT.AH:CollectCommodityResults(operation)
         end
     end
     table.sort(results, function(a, b) return a.unitPrice < b.unitPrice end)
-    return results, { kind = "commodity", listingCount = count, totalQuantity = totalQuantity }
+    return results, { kind = "commodity", listingCount = count, totalQuantity = totalQuantity, prices = prices }
 end
 
 function AHT.AH:CallCallback(operation, results, meta)

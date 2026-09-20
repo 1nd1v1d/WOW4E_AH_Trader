@@ -35,6 +35,7 @@ function AHT.Capabilities:Probe()
         item = type(C_Item) == "table",
         container = type(C_Container) == "table",
         tradeSkill = type(C_TradeSkillUI) == "table",
+        itemCount = HasFunction(C_Item, "GetItemCount") or type(GetItemCount) == "function",
         reputation = type(C_Reputation) == "table" or type(GetWatchedFactionInfo) == "function",
         functions = {},
     }
@@ -52,6 +53,8 @@ function AHT.Capabilities:Probe()
     end
     c.functions["C_Reputation.GetWatchedFactionData"] = HasFunction(C_Reputation, "GetWatchedFactionData")
     c.functions["GetWatchedFactionInfo"] = type(GetWatchedFactionInfo) == "function"
+    c.functions["C_Item.GetItemCount"] = HasFunction(C_Item, "GetItemCount")
+    c.functions["GetItemCount"] = type(GetItemCount) == "function"
 
     -- Keep the module table intact. Replacing AHT.Capabilities with the
     -- probe result would discard Probe/Has/Summary and make the next call

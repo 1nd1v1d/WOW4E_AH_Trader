@@ -86,6 +86,14 @@ function AHT.Recipes:Refresh()
     if self.refreshing or not C_TradeSkillUI then return end
     self.refreshing = true
     local newList = {}
+    local professionID, professionName
+    if C_TradeSkillUI.GetBaseProfessionInfo then
+        local okProfession, profession = pcall(C_TradeSkillUI.GetBaseProfessionInfo)
+        if okProfession and type(profession) == "table" then
+            professionID = profession.professionID or profession.parentProfessionID
+            professionName = profession.professionName or profession.name
+        end
+    end
     for _, recipeID in ipairs(ReadRecipeIDs()) do
         local ok, info = pcall(C_TradeSkillUI.GetRecipeInfo, recipeID)
         if ok and type(info) == "table" and info.name and info.learned ~= false then
@@ -97,18 +105,42 @@ function AHT.Recipes:Refresh()
                     name = info.name,
                     output = output,
                     reagents = reagents,
+                    professionID = professionID,
+                    professionName = professionName,
                     isTransmute = string.find(string.lower(info.name), "transmut") ~= nil,
                 })
             end
         end
     end
-    self.list = newList
+    -- Forever exposes recipes per opened profession window. Replace the
+    -- currently opened profession while retaining recipes learned from other
+    -- professions so the production planner can work across all crafts.
+    local merged, seen, refreshedIDs = {}, {}, {}
+    for _, recipe in ipairs(newList) do
+        if recipe.recipeID then refreshedIDs[recipe.recipeID] = true end
+    end
+    for _, recipe in ipairs(AHT.DB and AHT.DB.recipes or {}) do
+        local sameProfession = professionID and tonumber(recipe.professionID) == tonumber(professionID)
+        if not sameProfession and recipe.recipeID and not refreshedIDs[recipe.recipeID] and not seen[recipe.recipeID] then
+            seen[recipe.recipeID] = true
+            table.insert(merged, recipe)
+        end
+    end
+    for _, recipe in ipairs(newList) do
+        if recipe.recipeID and not seen[recipe.recipeID] then
+            seen[recipe.recipeID] = true
+            table.insert(merged, recipe)
+        end
+    end
+    table.sort(merged, function(a, b) return tostring(a.name or "") < tostring(b.name or "") end)
+    self.list = merged
     if AHT.DB then
-        AHT.DB.recipes = newList
+        AHT.DB.recipes = merged
         if AHT.Store then AHT.Store:Save() end
     end
+    if AHT.Inventory and AHT.Inventory.bankOpen then AHT.Inventory:RefreshKnownItems() end
     self.refreshing = false
-    if #newList > 0 then AHT:Print(string.format(AHT.L.recipesLoaded, #newList)) end
+    if #newList > 0 then AHT:Print(string.format(AHT.L.recipesLoaded, #merged)) end
     if AHT.UI and AHT.UI.frame and AHT.UI.frame:IsShown() then AHT:Refresh() end
 end
 
