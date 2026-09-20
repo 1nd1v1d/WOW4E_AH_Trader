@@ -6,7 +6,7 @@
 
 Ein eigenständiger Auction-House-, Rezept- und Margenanalysator für **World of Warcraft: Forever**. Das Addon ist aus dem ursprünglichen `TWOW_AH_Trader`-Projekt abgeleitet, verwendet aber eine getrennte moderne API-Schicht für die Forever-Beta.
 
-> Status: Beta-Port für Interface `16001` / Version `0.3.4-beta`. Rezept-, Commodity-Kauf- und Post-Events müssen weiterhin im echten Forever-Client verifiziert werden.
+> Status: Beta-Port für Interface `16001` / Version `0.3.5-beta`. Rezept-, Commodity-Kauf- und Post-Events müssen weiterhin im echten Forever-Client verifiziert werden.
 
 ## Funktionen
 
@@ -27,6 +27,7 @@ Ein eigenständiger Auction-House-, Rezept- und Margenanalysator für **World of
 - UI-Release mit fokussierter Hauptnavigation, globaler Suche, Profitfilter und gespeicherter Fenster-/Sortierposition
 - dynamische Tabellenzeilen ohne künstliche 24-Zeilen-Grenze
 - persistenter SavedVariables-Schutz gegen temporär leere Berufsdaten beim Clientstart
+- verschiebbare Dialoge ohne Überlagerung von Rezeptaktions- und Postplanfenster
 
 ## Installation
 

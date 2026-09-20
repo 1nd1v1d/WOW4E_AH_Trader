@@ -61,7 +61,9 @@ $requiredSnippets = @(
     "self:Save()",
     "result.currentSalePrice = result.salePrice",
     "result.expectedSalePrice = result.currentSalePrice or result.marketSalePrice",
-    'label = "Marktwert"'
+    'label = "Marktwert"',
+    "local function MakeDialogMovable(dialog)",
+    "if self.actionDialog then self.actionDialog:Hide() end"
 )
 foreach ($snippet in $requiredSnippets) {
     if (-not $source.Contains($snippet)) {

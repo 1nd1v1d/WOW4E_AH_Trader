@@ -29,7 +29,7 @@ Die aktuelle Beta verwendet Interface `16001` für Version 1.60.1. Bei einem neu
 
 Die Hauptnavigation ist auf die vier täglichen Arbeitsbereiche `Herstellen`, `Markt`, `Aufträge` und `Chancen` reduziert. `Ruf` und `Diagnose` werden über `Mehr` geöffnet. Die Suche filtert sichtbare Rezepte, Materialien, Chancen und Aufträge; der Profitfilter blendet nicht profitable Ergebnisse aus. Tabellenüberschriften sind anklickbar und wechseln zwischen auf- und absteigender Sortierung. Fensterposition, Größe, Ansicht und Sortierspalte werden in den SavedVariables gespeichert.
 
-Die Listen verwenden einen dynamischen Zeilenpool. Dadurch bleiben auch mehr als 24 Rezepte, Materialien oder Chancen vollständig sichtbar und scrollbar. Ein Klick auf ein Material öffnet Aktionen für einen Live-Scan oder das Entfernen aus der Überwachung. Dialoge kennzeichnen Mengen und Preise explizit; Preise im Postplan werden weiterhin als Kupfer pro Stück eingegeben.
+Die Listen verwenden einen dynamischen Zeilenpool. Dadurch bleiben auch mehr als 24 Rezepte, Materialien oder Chancen vollständig sichtbar und scrollbar. Ein Klick auf ein Material öffnet Aktionen für einen Live-Scan oder das Entfernen aus der Überwachung. Dialoge kennzeichnen Mengen und Preise explizit; Preise im Postplan werden weiterhin als Kupfer pro Stück eingegeben. Alle Rezept-, Kauf-, Auftrags- und Postdialoge lassen sich an ihrer Titelleiste verschieben; beim Wechsel vom Rezeptaktionsfenster zum Postplan wird das Vorgängerfenster ausgeblendet.
 
 SavedVariables werden beim Addonstart defensiv validiert. Ein vorübergehend leerer `TRADE_SKILL_LIST_UPDATE`-Event darf den gespeicherten Rezeptkatalog nicht überschreiben; die alten Rezepte bleiben erhalten, bis der Berufskatalog vollständig gelesen werden konnte.
 

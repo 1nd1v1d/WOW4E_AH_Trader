@@ -22,6 +22,26 @@ local function MakeBackdrop(frame)
     if frame.SetBackdropBorderColor then frame:SetBackdropBorderColor(0.75, 0.48, 0.12, 0.95) end
 end
 
+local function MakeDialogMovable(dialog)
+    dialog:SetMovable(true)
+    dialog:EnableMouse(true)
+    if dialog.SetClampedToScreen then dialog:SetClampedToScreen(true) end
+
+    local dragHandle = CreateFrame("Frame", nil, dialog)
+    dragHandle:SetPoint("TOPLEFT", 4, -4)
+    dragHandle:SetPoint("TOPRIGHT", -4, -4)
+    dragHandle:SetHeight(34)
+    dragHandle:EnableMouse(true)
+    dragHandle:RegisterForDrag("LeftButton")
+    dragHandle:SetScript("OnDragStart", function()
+        dialog:StartMoving()
+    end)
+    dragHandle:SetScript("OnDragStop", function()
+        dialog:StopMovingOrSizing()
+    end)
+    dialog.dragHandle = dragHandle
+end
+
 local function Button(parent, name, text, width, height)
     local button = CreateFrame("Button", name, parent, "UIPanelButtonTemplate")
     button:SetSize(width or 110, height or 24)
@@ -1123,6 +1143,7 @@ function AHT.UI:ShowRecipeActions(result)
     dialog:SetPoint("CENTER")
     dialog:SetFrameStrata("TOOLTIP")
     MakeBackdrop(dialog)
+    MakeDialogMovable(dialog)
     self.actionDialog = dialog
 
     local title = Label(dialog, result.name or "Rezept", 380)
@@ -1161,6 +1182,7 @@ function AHT.UI:ShowOpportunityActions(result)
     dialog:SetPoint("CENTER")
     dialog:SetFrameStrata("TOOLTIP")
     MakeBackdrop(dialog)
+    MakeDialogMovable(dialog)
     self.actionDialog = dialog
 
     local title = Label(dialog, result.name or "Marktchance", 420)
@@ -1281,6 +1303,7 @@ function AHT.UI:ShowBuyDialog(result, existingOrder)
     dialog:SetPoint("CENTER")
     dialog:SetFrameStrata("TOOLTIP")
     MakeBackdrop(dialog)
+    MakeDialogMovable(dialog)
     self.buyDialog = dialog
     dialog.result = result
     dialog.order = existingOrder
@@ -1432,6 +1455,7 @@ function AHT.UI:ShowOrderActions(order)
     dialog:SetPoint("CENTER")
     dialog:SetFrameStrata("TOOLTIP")
     MakeBackdrop(dialog)
+    MakeDialogMovable(dialog)
 
     local title = Label(dialog, order.name or "Herstellungsauftrag", 440)
     title:SetPoint("TOPLEFT", 14, -14)
@@ -1471,12 +1495,15 @@ function AHT.UI:ShowOrderActions(order)
 end
 
 function AHT.UI:ShowPostDialog(result)
+    if self.actionDialog then self.actionDialog:Hide() end
+    if self.postDialog then self.postDialog:Hide() end
     local template = BackdropTemplateMixin and "BackdropTemplate" or nil
     local dialog = CreateFrame("Frame", nil, UIParent, template)
     dialog:SetSize(430, 230)
     dialog:SetPoint("CENTER")
     dialog:SetFrameStrata("TOOLTIP")
     MakeBackdrop(dialog)
+    MakeDialogMovable(dialog)
     self.postDialog = dialog
 
     local title = Label(dialog, "Postplan: " .. (result.name or "?"), 400)
