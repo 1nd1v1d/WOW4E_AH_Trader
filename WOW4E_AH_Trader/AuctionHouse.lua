@@ -60,6 +60,97 @@ function AHT.AH:Search(target, callback)
     return true
 end
 
+local function FindChildObject(parent, objectType, depth, predicate)
+    if not parent or depth > 4 or type(parent.GetChildren) ~= "function" then return nil end
+    local children = { parent:GetChildren() }
+    for _, child in ipairs(children) do
+        if child and type(child.IsObjectType) == "function" then
+            local ok, matches = pcall(child.IsObjectType, child, objectType)
+            if ok and matches and (not predicate or predicate(child)) then return child end
+        end
+        local nested = FindChildObject(child, objectType, depth + 1, predicate)
+        if nested then return nested end
+    end
+end
+
+local function FindSearchControl(parent, names, objectType)
+    for _, name in ipairs(names) do
+        local control = parent and parent[name]
+        if control then return control end
+    end
+    return FindChildObject(parent, objectType, 0)
+end
+
+local function FindSearchButton(parent)
+    for _, name in ipairs({ "SearchButton", "searchButton", "Search", "searchButtonFrame" }) do
+        local named = parent and parent[name]
+        if named then return named end
+    end
+    local byText = FindChildObject(parent, "Button", 0, function(button)
+        if type(button.GetText) ~= "function" then return false end
+        local ok, text = pcall(button.GetText, button)
+        text = string.lower(tostring(ok and text or ""))
+        return text == "suchen" or text == "search"
+    end)
+    return byText or FindChildObject(parent, "Button", 0)
+end
+
+function AHT.AH:OpenItemInAuctionHouse(target)
+    if not target or not target.itemID then return false, "item_id_missing" end
+    if not AHT.AHOpen then return false, "auction_house_closed" end
+
+    local frame = _G.AuctionHouseFrame
+    if not frame then return false, "auction_house_frame_missing" end
+    if frame.Show then frame:Show() end
+
+    local searchBar = frame.SearchBar or frame.searchBar or frame.SearchPanel or frame.searchPanel or frame
+    local searchBox = FindSearchControl(searchBar, {
+        "SearchBox", "searchBox", "SearchTextBox", "searchTextBox", "EditBox", "editBox",
+    }, "EditBox")
+    local searchButton = FindSearchButton(searchBar)
+    local _, itemLink = AHT:GetItemInfo(target.itemID)
+    local query = itemLink or target.name or tostring(target.itemID)
+
+    if searchBox and searchBox.SetText then
+        pcall(searchBox.SetText, searchBox, query)
+        if searchBox.ClearFocus then pcall(searchBox.ClearFocus, searchBox) end
+    end
+
+    -- Prefer the client's own submit control so its result panel, filters and
+    -- selected item state stay synchronized with the query field.
+    if searchButton and searchButton.Click then
+        local ok = pcall(searchButton.Click, searchButton)
+        if ok then return true end
+    end
+    if searchBox and searchBox.GetScript then
+        local handler = searchBox:GetScript("OnEnterPressed")
+        if type(handler) == "function" then
+            local ok = pcall(handler, searchBox)
+            if ok then return true end
+        end
+    end
+
+    local directSearch = searchBar.SearchForItem or searchBar.searchForItem or frame.SearchForItem or frame.searchForItem
+    if type(directSearch) == "function" then
+        local owner = frame
+        if searchBar.SearchForItem == directSearch or searchBar.searchForItem == directSearch then
+            owner = searchBar
+        end
+        local ok = pcall(directSearch, owner, query)
+        if ok then return true end
+    end
+
+    -- Last-resort fallback for client builds without an exposed SearchBar.
+    -- The official result event will still update the AH frame when it listens
+    -- to C_AuctionHouse search responses.
+    if C_AuctionHouse and C_AuctionHouse.SendSearchQuery then
+        local itemKey = target.itemKey or AHT:MakeItemKey(target.itemID)
+        local ok = pcall(C_AuctionHouse.SendSearchQuery, itemKey, { sortOrder = 0, reverseSort = false }, false)
+        if ok then return true end
+    end
+    return false, "auction_house_search_control_missing"
+end
+
 function AHT.AH:Pump()
     if self.active then return end
     if not AHT.AHOpen then

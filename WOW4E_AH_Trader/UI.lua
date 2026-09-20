@@ -497,7 +497,13 @@ function AHT.UI:CreateRow(index)
         local text = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
         row.cells[cellIndex] = text
     end
-    row:SetScript("OnClick", function()
+    row:SetScript("OnClick", function(_, button)
+        if button == "LeftButton" and type(IsShiftKeyDown) == "function" and IsShiftKeyDown() then
+            if row.result and row.result.kind ~= "info" and row.result.kind ~= "order" then
+                self:OpenResultInAuctionHouse(row.result)
+            end
+            return
+        end
         if row.result and row.result.kind == "order" then
             self:ShowOrderActions(row.result.order)
         elseif row.result and row.result.kind == "opportunity" then
@@ -525,6 +531,38 @@ function AHT.UI:CreateRow(index)
         if self.recipeTooltipOwner == row then self:HideRecipeContext() end
     end)
     self.rows[index] = row
+end
+
+function AHT.UI:OpenResultInAuctionHouse(result)
+    if not result or not AHT.AH or not AHT.AH.OpenItemInAuctionHouse then return false end
+    local item = result.output and result.output.itemID and result.output or result
+    local itemID = tonumber(item.itemID)
+    if not itemID then
+        AHT:Print("Dieses Ergebnis hat keine Item-ID für die AH-Suche.")
+        return false
+    end
+
+    local name = item.name or AHT:GetItemInfo(itemID) or result.name or tostring(itemID)
+    local ok, reason = AHT.AH:OpenItemInAuctionHouse({
+        itemID = itemID,
+        itemKey = result.itemKey,
+        name = name,
+    })
+    if not ok then
+        if reason == "auction_house_closed" then
+            AHT:Print("Bitte zuerst das Auktionshaus öffnen.")
+        else
+            AHT:Print("AH-Suche konnte nicht geöffnet werden: " .. tostring(reason or "unbekannt"))
+        end
+        return false
+    end
+
+    self:HideRecipeContext()
+    if self.actionDialog then self.actionDialog:Hide() end
+    if self.buyDialog then self.buyDialog:Hide() end
+    if self.postDialog then self.postDialog:Hide() end
+    if self.frame then self.frame:Hide() end
+    return true
 end
 
 function AHT.UI:EnsureRows(count)
@@ -692,6 +730,7 @@ function AHT.UI:ShowRecipeContext(result, owner)
     GameTooltip:ClearLines()
     GameTooltip:AddLine(result.name or "Rezept", 1, 0.84, 0.35)
     GameTooltip:AddLine("Zutaten und Marktpreise", 0.8, 0.75, 0.55)
+    GameTooltip:AddLine("Shift+Linksklick: Ergebnis direkt im AH anzeigen", 0.62, 0.72, 0.95)
     GameTooltip:AddLine(" ")
 
     for _, reagent in ipairs(result.reagents or {}) do
@@ -753,6 +792,7 @@ function AHT.UI:ShowMaterialContext(result, owner)
     GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
     GameTooltip:ClearLines()
     GameTooltip:AddLine(result.name or "Material", 1, 0.84, 0.35)
+    GameTooltip:AddLine("Shift+Linksklick: Item direkt im AH anzeigen", 0.62, 0.72, 0.95)
     GameTooltip:AddDoubleLine("Aktueller Einkauf", result.currentPrice and AHT:FormatMoneyPlain(result.currentPrice) or "?", 0.78, 0.78, 0.78, 1, 0.85, 0.35)
     GameTooltip:AddDoubleLine("Altersgewichteter Ø", result.averagePrice and AHT:FormatMoneyPlain(result.averagePrice) or "?", 0.78, 0.78, 0.78, 0.45, 1, 0.45)
     GameTooltip:AddDoubleLine("Robuster Marktwert", result.marketValue and AHT:FormatMoneyPlain(result.marketValue) or "?", 0.78, 0.78, 0.78, 0.45, 0.85, 1)
@@ -771,6 +811,7 @@ function AHT.UI:ShowOpportunityContext(result, owner)
     GameTooltip:ClearLines()
     local selling = result.side == "sell"
     GameTooltip:AddLine((selling and "Verkaufschance: " or "Kaufchance: ") .. (result.name or "Chance"), 1, 0.84, 0.35)
+    GameTooltip:AddLine("Shift+Linksklick: Item direkt im AH anzeigen", 0.62, 0.72, 0.95)
     GameTooltip:AddDoubleLine(selling and "Verkauf aktuell" or "Einkauf aktuell", AHT:FormatMoneyPlain(result.currentPrice or 0), 1, 0.85, 0.35, 0.45, 0.85, 1)
     GameTooltip:AddDoubleLine("Marktwert", AHT:FormatMoneyPlain(result.marketValue or 0), 0.78, 0.78, 0.78, 0.45, 0.85, 1)
     GameTooltip:AddDoubleLine(selling and "Nettoerlös pro Stück" or "Netto pro Stück", AHT:FormatMoneyPlain(result.profit or 0), 0.45, 1, 0.45, 0.45, 1, 0.45)
