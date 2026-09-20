@@ -58,7 +58,10 @@ $requiredSnippets = @(
     "AHT.DB.ui.viewMode",
     'if type(WOW4E_AHT_DB) ~= "table"',
     "if #newList == 0 then",
-    "self:Save()"
+    "self:Save()",
+    "result.currentSalePrice = result.salePrice",
+    "result.expectedSalePrice = result.currentSalePrice or result.marketSalePrice",
+    'label = "Marktwert"'
 )
 foreach ($snippet in $requiredSnippets) {
     if (-not $source.Contains($snippet)) {

@@ -2,7 +2,7 @@ WOW4E_AHT = WOW4E_AHT or {}
 local AHT = WOW4E_AHT
 
 AHT.ADDON_NAME = "WOW4E_AH_Trader"
-AHT.VERSION = "0.3.3-beta"
+AHT.VERSION = "0.3.4-beta"
 AHT.AHOpen = false
 AHT.Initialized = false
 AHT.State = {

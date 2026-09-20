@@ -29,8 +29,11 @@ function AHT.Calculator:CalculateRecipe(recipe)
         marketSnapshot = marketSnapshot,
         listingCount = 0,
     }
-    result.expectedSalePrice = result.marketSalePrice or result.salePrice
     result.currentSalePrice = result.salePrice
+    -- The latest AH scan is the primary sale reference because it reflects
+    -- the current market. The robust value is a comparison/orientation and
+    -- remains available separately for the UI and opportunity analysis.
+    result.expectedSalePrice = result.currentSalePrice or result.marketSalePrice
     local complete = true
 
     for _, reagent in ipairs(recipe.reagents or {}) do

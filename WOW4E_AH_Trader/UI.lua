@@ -43,12 +43,13 @@ local function DisableInput(box)
 end
 
 local RECIPE_COLUMNS = {
-    { key = "name", label = "Rezept / Ergebnis", width = 250 },
-    { key = "ingredientCost", label = "Kosten", width = 90 },
-    { key = "salePrice", label = "Verkauf", width = 90 },
-    { key = "profit", label = "Gewinn", width = 90 },
-    { key = "margin", label = "Marge", width = 80 },
-    { key = "suggestedCrafts", label = "Empf.", width = 100 },
+    { key = "name", label = "Rezept / Ergebnis", width = 215 },
+    { key = "ingredientCost", label = "Kosten", width = 80 },
+    { key = "salePrice", label = "Aktuell", width = 80 },
+    { key = "marketSalePrice", label = "Marktwert", width = 90 },
+    { key = "profit", label = "Gewinn", width = 80 },
+    { key = "margin", label = "Marge", width = 70 },
+    { key = "suggestedCrafts", label = "Empf.", width = 85 },
 }
 
 local MATERIAL_COLUMNS = {
@@ -112,7 +113,7 @@ end
 local VIEW_INFO = {
     recipes = {
         title = "Herstellen",
-        help = "Alle erkannten Herstellungsrezepte. Klick öffnet Kosten, Marge, Kaufplan und Postplan.",
+        help = "Aktuell = letzter AH-Scan; Marktwert = robuste Orientierung über mehrere Scans.",
     },
     transmute = {
         title = "Transmute",
@@ -1037,21 +1038,36 @@ function AHT.UI:Refresh(skipCalculator)
                 local profit = result.profit and AHT:FormatMoneyPlain(result.profit) or AHT.L.incomplete
                 local margin = result.margin and string.format("%.1f%%", result.margin) or "-"
                 local cost = result.ingredientCost and AHT:FormatMoneyPlain(result.ingredientCost) or "?"
-                local sale = result.expectedSalePrice and AHT:FormatMoneyPlain(result.expectedSalePrice) or result.salePrice and AHT:FormatMoneyPlain(result.salePrice) or "?"
+                local currentSale = result.currentSalePrice or result.salePrice
+                local currentText = currentSale and AHT:FormatMoneyPlain(currentSale) or "?"
+                local marketText = result.marketSalePrice and AHT:FormatMoneyPlain(result.marketSalePrice) or "?"
                 local prefix = result.isDeal and "★ " or ""
                 row.info:Hide()
                 row.cells[1]:SetText(prefix .. (result.name or "?"))
                 row.cells[2]:SetText(cost)
-                row.cells[3]:SetText(sale)
-                row.cells[4]:SetText(profit)
-                row.cells[5]:SetText(margin)
-                row.cells[6]:SetText((result.suggestedCrafts or 0) > 0 and tostring(result.suggestedCrafts) or "-")
+                row.cells[3]:SetText(currentText)
+                row.cells[4]:SetText(marketText)
+                row.cells[5]:SetText(profit)
+                row.cells[6]:SetText(margin)
+                row.cells[7]:SetText((result.suggestedCrafts or 0) > 0 and tostring(result.suggestedCrafts) or "-")
                 for index = 1, #RECIPE_COLUMNS do row.cells[index]:Show() end
                 for index = #RECIPE_COLUMNS + 1, MAX_COLUMNS do row.cells[index]:Hide() end
-                if result.profit and result.profit >= 0 then
-                    row.cells[4]:SetTextColor(0.35, 1, 0.35)
+                if currentSale and result.marketSalePrice then
+                    if currentSale < result.marketSalePrice then
+                        row.cells[3]:SetTextColor(0.35, 1, 0.45)
+                    elseif currentSale > result.marketSalePrice then
+                        row.cells[3]:SetTextColor(1, 0.55, 0.35)
+                    else
+                        row.cells[3]:SetTextColor(1, 0.85, 0.4)
+                    end
                 else
-                    row.cells[4]:SetTextColor(1, 0.45, 0.35)
+                    row.cells[3]:SetTextColor(1, 0.85, 0.4)
+                end
+                row.cells[4]:SetTextColor(0.45, 0.85, 1)
+                if result.profit and result.profit >= 0 then
+                    row.cells[5]:SetTextColor(0.35, 1, 0.35)
+                else
+                    row.cells[5]:SetTextColor(1, 0.45, 0.35)
                 end
                 row:EnableMouse(true)
             end
@@ -1113,9 +1129,10 @@ function AHT.UI:ShowRecipeActions(result)
     title:SetPoint("TOPLEFT", 14, -14)
     title:SetFontObject("GameFontHighlightLarge")
     local detail = Label(dialog, string.format(
-        "Kosten %s | Verkauf %s | Gewinn %s | Marge %s\nHover zeigt Zutaten, Bestand, aktuellen Preis und altersgewichteten Durchschnitt.",
+        "Kosten %s | Aktuell %s | Marktwert %s | Gewinn %s | Marge %s\nHover zeigt Zutaten, Bestand, aktuellen Preis und altersgewichteten Durchschnitt.",
         result.ingredientCost and AHT:FormatMoneyPlain(result.ingredientCost) or "?",
-        result.expectedSalePrice and AHT:FormatMoneyPlain(result.expectedSalePrice) or result.salePrice and AHT:FormatMoneyPlain(result.salePrice) or "?",
+        (result.currentSalePrice or result.salePrice) and AHT:FormatMoneyPlain(result.currentSalePrice or result.salePrice) or "?",
+        result.marketSalePrice and AHT:FormatMoneyPlain(result.marketSalePrice) or "?",
         result.profit and AHT:FormatMoneyPlain(result.profit) or "?",
         result.margin and string.format("%.1f%%", result.margin) or "?"
     ), 380)

@@ -59,7 +59,7 @@ Die Laufzeitdauer wird intern als Modern-AH-Enum `1/2/3` geführt (12/24/48 Stun
 
 ## Marktwert und Chancen
 
-Ein Scan speichert neben dem niedrigsten Stückpreis auch die Preisverteilung der sichtbaren Angebote. Aus Median, getrimmtem Mittelwert, P25/P75-Preis und Markttiefe wird ein robuster Marktwert gebildet. Mehrere Scans desselben Tages werden zu einem Tagessnapshot zusammengefasst; ältere Tage werden mit einer konfigurierbaren Halbwertszeit abgewertet. Der niedrigste Preis bleibt der reale Einkaufswert für AutoBuy, der robuste Marktwert dient als Erwartungswert für Verkauf und Chancenanalyse.
+Ein Scan speichert neben dem niedrigsten Stückpreis auch die Preisverteilung der sichtbaren Angebote. Aus Median, getrimmtem Mittelwert, P25/P75-Preis und Markttiefe wird ein robuster Marktwert gebildet. Mehrere Scans desselben Tages werden zu einem Tagessnapshot zusammengefasst; ältere Tage werden mit einer konfigurierbaren Halbwertszeit abgewertet. In der Rezeptansicht ist der letzte Scan der aktuelle Verkaufswert und damit die primäre Grundlage für Gewinn und Marge. Der robuste Marktwert bleibt als Orientierung sichtbar und zeigt, ob der aktuelle Preis über oder unter dem historischen Niveau liegt; in der Chancenanalyse dient er weiterhin als Vergleichswert.
 
 Die Ansicht `Chancen` filtert Angebote erst nach einer Mindesthistorie, berücksichtigt AH-Gebühr und zeigt Rabatt, Netto-Gewinn, ROI, Menge, Listings und Vertrauensniveau. Ein NPC-Vergleich wird nur angezeigt, wenn der Forever-Client den Händlerverkaufspreis bereits kennt. Das Addon kauft aus dieser Ansicht nicht automatisch; jede Kaufaktion bleibt an den sichtbaren Produktionsauftrag beziehungsweise die Benutzerbestätigung gebunden.
 
