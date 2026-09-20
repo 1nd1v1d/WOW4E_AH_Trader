@@ -1,13 +1,18 @@
 local AHT = WOW4E_AHT
 
-AHT.Scanner = { running = false, queue = {}, completed = 0, total = 0 }
+AHT.Scanner = { running = false, queue = {}, completed = 0, total = 0, mode = "all" }
 
 local function AddTarget(targets, seen, item)
     if not item or not item.itemID then return end
     local key = tostring(item.itemID)
     if not seen[key] then
         seen[key] = true
-        table.insert(targets, { itemID = item.itemID, name = item.name, kind = item.kind })
+        table.insert(targets, {
+            itemID = item.itemID,
+            itemKey = item.itemKey,
+            name = item.name,
+            kind = item.kind,
+        })
     end
 end
 
@@ -20,7 +25,20 @@ function AHT.Scanner:BuildTargets()
     for _, material in pairs(AHT.DB and AHT.DB.materials or {}) do
         if material.enabled ~= false then AddTarget(targets, seen, material) end
     end
+    -- A full scan is still serialized through the same AH queue. It covers
+    -- bag/bank contents, profession inputs/outputs and all previously stored
+    -- market records, so every item uses the same snapshot/history schema.
+    if AHT.Inventory and AHT.Inventory.GetScanTargets then
+        for _, target in ipairs(AHT.Inventory:GetScanTargets()) do
+            AddTarget(targets, seen, target)
+        end
+    end
     return targets
+end
+
+function AHT.Scanner:StartAll()
+    self.mode = "all"
+    return self:Start(self:BuildTargets())
 end
 
 function AHT.Scanner:Start(targets)
@@ -33,12 +51,13 @@ function AHT.Scanner:Start(targets)
         return
     end
     targets = targets or self:BuildTargets()
+    self.mode = self.mode or "all"
     self.queue = targets
     self.completed = 0
     self.total = #targets
     self.running = self.total > 0
     if not self.running then
-        AHT:Print(AHT.L.noRecipes)
+        AHT:Print("Keine scanbaren Items gefunden.")
         return
     end
     AHT.State.status = "scanning"

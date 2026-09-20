@@ -33,6 +33,40 @@ local function QueryItemCount(itemID, includeBank)
     return nil
 end
 
+local function ContainerItemID(bag, slot)
+    if C_Container and type(C_Container.GetContainerItemInfo) == "function" then
+        local ok, info = pcall(C_Container.GetContainerItemInfo, bag, slot)
+        if ok and info then
+            return tonumber(info.itemID) or AHT:GetItemID(info.hyperlink)
+        end
+    end
+    if type(GetContainerItemLink) == "function" then
+        local ok, link = pcall(GetContainerItemLink, bag, slot)
+        if ok then return AHT:GetItemID(link) end
+    end
+end
+
+local function ScanContainer(bag, callback)
+    if not C_Container or type(C_Container.GetContainerNumSlots) ~= "function" then return end
+    local ok, slots = pcall(C_Container.GetContainerNumSlots, bag)
+    if not ok or not slots then return end
+    for slot = 1, slots do
+        local itemID = ContainerItemID(bag, slot)
+        if itemID then callback(itemID) end
+    end
+end
+
+local function ScanVisibleContainers(includeBank, callback)
+    local bagSlots = tonumber(NUM_BAG_SLOTS) or 4
+    for bag = 0, bagSlots do ScanContainer(bag, callback) end
+    if not includeBank then return end
+
+    ScanContainer(-1, callback)
+    local bankSlots = tonumber(NUM_BANKBAGSLOTS) or 7
+    for bag = -2, -(bankSlots + 1), -1 do ScanContainer(bag, callback) end
+    if REAGENTBANK_CONTAINER then ScanContainer(REAGENTBANK_CONTAINER, callback) end
+end
+
 function AHT.Inventory:Initialize()
     if not AHT.DB then return end
     AHT.DB.inventory = AHT.DB.inventory or { characters = {} }
@@ -81,7 +115,38 @@ function AHT.Inventory:GetKnownItemIDs()
             for _, requirement in ipairs(order.requirements or {}) do Add(requirement.itemID) end
         end
     end
+
+    for _, material in pairs(AHT.DB and AHT.DB.materials or {}) do Add(material.itemID) end
+    for _, record in pairs(AHT.DB and AHT.DB.market or {}) do Add(record.itemID) end
+    -- Include visible contents so bank snapshots cover items that are not on
+    -- the material watchlist yet.
+    ScanVisibleContainers(self.bankOpen, Add)
     return ids
+end
+
+function AHT.Inventory:GetScanTargets()
+    local targets, seen = {}, {}
+    local function Add(itemID, name, itemKey, kind)
+        itemID = tonumber(itemID)
+        if not itemID or seen[itemID] then return end
+        seen[itemID] = true
+        table.insert(targets, {
+            itemID = itemID,
+            name = name or AHT:GetItemInfo(itemID) or tostring(itemID),
+            itemKey = itemKey,
+            kind = kind or "inventory",
+        })
+    end
+
+    for _, itemID in ipairs(self:GetKnownItemIDs()) do Add(itemID) end
+    ScanVisibleContainers(self.bankOpen, function(itemID) Add(itemID, nil, nil, "inventory") end)
+    for _, record in pairs(AHT.DB and AHT.DB.market or {}) do
+        Add(record.itemID, record.name, record.itemKey, record.kind or "market")
+    end
+    table.sort(targets, function(a, b)
+        return string.lower(tostring(a.name or a.itemID)) < string.lower(tostring(b.name or b.itemID))
+    end)
+    return targets
 end
 
 function AHT.Inventory:RefreshBankItem(itemID)

@@ -84,9 +84,9 @@ local MATERIAL_COLUMNS = {
 
 local OPPORTUNITY_COLUMNS = {
     { key = "name", label = "Chance / Item", width = 200 },
-    { key = "currentPrice", label = "Einkauf", width = 85 },
+    { key = "currentPrice", label = "Preis", width = 85 },
     { key = "marketValue", label = "Marktwert", width = 95 },
-    { key = "discount", label = "Rabatt", width = 80 },
+    { key = "discount", label = "Vorteil", width = 80 },
     { key = "profit", label = "Netto", width = 85 },
     { key = "roi", label = "ROI", width = 70 },
     { key = "quantity", label = "Menge", width = 85 },
@@ -149,7 +149,7 @@ local VIEW_INFO = {
     },
     opportunities = {
         title = "Chancen",
-        help = "Preisfehler und unterbewertete Angebote aus Marktwert, AH-Gebühr und Liquidität.",
+        help = "Kauf- und Verkaufschancen aus aktuellem AH-Preis, robustem Marktwert und deinem Bestand.",
     },
     reputation = {
         title = "Ruf",
@@ -322,7 +322,7 @@ function AHT.UI:Create()
     self.viewHelp:SetPoint("TOPLEFT", 18, -151)
     self.viewHelp:SetTextColor(0.72, 0.68, 0.58)
 
-    self.scanButton = Button(self.frame, nil, "Scan", 100, 24)
+    self.scanButton = Button(self.frame, nil, "AH Scan", 100, 24)
     self.scanButton:SetPoint("TOPLEFT", 18, -70)
     self.scanButton:SetScript("OnClick", function()
         if AHT.Scanner.running then AHT.Scanner:Stop("user") else AHT.Scanner:Start() end
@@ -669,6 +669,9 @@ function AHT.UI:MatchesFilter(result)
         if profit == nil and result.kind == "material" then
             profit = (tonumber(result.marketValue) or 0) - (tonumber(result.currentPrice) or 0)
         end
+        if profit == nil and result.kind == "opportunity" and result.side == "sell" then
+            profit = tonumber(result.discount) or 0
+        end
         if profit == nil or profit <= 0 then return false end
     end
     return true
@@ -766,14 +769,19 @@ function AHT.UI:ShowOpportunityContext(result, owner)
     self.recipeTooltipOwner = owner
     GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
     GameTooltip:ClearLines()
-    GameTooltip:AddLine(result.name or "Chance", 1, 0.84, 0.35)
-    GameTooltip:AddDoubleLine("Einkauf", AHT:FormatMoneyPlain(result.currentPrice or 0), 1, 0.85, 0.35, 0.45, 0.85, 1)
+    local selling = result.side == "sell"
+    GameTooltip:AddLine((selling and "Verkaufschance: " or "Kaufchance: ") .. (result.name or "Chance"), 1, 0.84, 0.35)
+    GameTooltip:AddDoubleLine(selling and "Verkauf aktuell" or "Einkauf aktuell", AHT:FormatMoneyPlain(result.currentPrice or 0), 1, 0.85, 0.35, 0.45, 0.85, 1)
     GameTooltip:AddDoubleLine("Marktwert", AHT:FormatMoneyPlain(result.marketValue or 0), 0.78, 0.78, 0.78, 0.45, 0.85, 1)
-    GameTooltip:AddDoubleLine("Netto pro Stück", AHT:FormatMoneyPlain(result.profit or 0), 0.45, 1, 0.45, 0.45, 1, 0.45)
+    GameTooltip:AddDoubleLine(selling and "Nettoerlös pro Stück" or "Netto pro Stück", AHT:FormatMoneyPlain(result.profit or 0), 0.45, 1, 0.45, 0.45, 1, 0.45)
     GameTooltip:AddDoubleLine("ROI", string.format("%.1f%%", result.roi or 0), 0.78, 0.78, 0.78, 0.45, 1, 0.45)
-    GameTooltip:AddLine(string.format("Rabatt %.1f%% | Empfehlung: %s", result.discount or 0, result.bestMethod or "AH"), 0.78, 0.78, 0.78)
-    GameTooltip:AddLine(string.format("Liquidität: %d Stück / %d Listings | Vertrauen %d%%", result.quantity or 0, result.listingCount or 0, result.confidence or 0), 0.62, 0.72, 0.95)
-    GameTooltip:AddLine("Klick für Materialüberwachung oder erneuten Scan.", 0.62, 0.62, 0.62)
+    GameTooltip:AddLine(string.format("%s %.1f%% | Empfehlung: %s", selling and "Aufschlag" or "Rabatt", result.discount or 0, result.bestMethod or "AH"), 0.78, 0.78, 0.78)
+    if selling then
+        GameTooltip:AddLine(string.format("Bestand: Tasche %d | Bank %s", result.stockBags or 0, result.bankKnown and tostring(result.stockBank or 0) or "?"), 0.62, 0.72, 0.95)
+    else
+        GameTooltip:AddLine(string.format("Angebot: %d Stück / %d Listings", result.quantity or 0, result.listingCount or 0), 0.62, 0.72, 0.95)
+    end
+    GameTooltip:AddLine(string.format("Vertrauen %d%% | Klick für Details.", result.confidence or 0), 0.62, 0.62, 0.62)
     GameTooltip:Show()
 end
 
@@ -853,7 +861,7 @@ function AHT.UI:RefreshStatus()
     local help = view.help
     if self.lastMessage ~= "" then help = help .. " | " .. self.lastMessage end
     if self.viewHelp then self.viewHelp:SetText(help) end
-    self.scanButton:SetText(AHT.Scanner and AHT.Scanner.running and "Abbrechen" or "Scan")
+    self.scanButton:SetText(AHT.Scanner and AHT.Scanner.running and "Abbrechen" or "AH Scan")
 end
 
 function AHT.UI:BuildMaterialRows()
@@ -897,9 +905,11 @@ function AHT.UI:BuildMaterialRows()
 end
 
 function AHT.UI:BuildOpportunityRows()
+    -- Opportunity rows use current recipe cost as an optional sell basis.
+    if AHT.Calculator then AHT.Calculator:Refresh() end
     local rows = AHT.Opportunities and AHT.Opportunities:Build() or {}
     if #rows == 0 then
-        table.insert(rows, { kind = "info", text = "Keine belastbare Chance gefunden. Mindestens zwei Markttage bzw. Scans und ein aktueller Scan werden benötigt." })
+        table.insert(rows, { kind = "info", text = "Keine Kauf- oder Verkaufschance gefunden. AH öffnen und 'AH Scan' ausführen; Verkaufschancen benötigen außerdem Bestand in Tasche oder Bank." })
     end
     return rows
 end
@@ -1033,14 +1043,17 @@ function AHT.UI:Refresh(skipCalculator)
                 row:EnableMouse(true)
             elseif result.kind == "opportunity" then
                 row.info:Hide()
-                row.cells[1]:SetText("★ " .. (result.name or "?"))
+                local marker = result.side == "sell" and "▼ Verkaufen: " or "▲ Kaufen: "
+                row.cells[1]:SetText(marker .. (result.name or "?"))
                 row.cells[2]:SetText(AHT:FormatMoneyPlain(result.currentPrice or 0))
-                row.cells[3]:SetText(AHT:FormatMoneyPlain(result.marketValue or 0))
+                row.cells[3]:SetText(result.marketValue and AHT:FormatMoneyPlain(result.marketValue) or "-")
                 row.cells[4]:SetText(string.format("%.1f%%", result.discount or 0))
-                row.cells[5]:SetText(AHT:FormatMoneyPlain(result.profit or 0))
+                row.cells[5]:SetText(result.profit and AHT:FormatMoneyPlain(result.profit) or "-")
                 row.cells[6]:SetText(string.format("%.1f%%", result.roi or 0))
                 row.cells[7]:SetText(tostring(result.quantity or 0))
                 for index = 1, #OPPORTUNITY_COLUMNS do row.cells[index]:Show() end
+                row.cells[2]:SetTextColor(result.side == "sell" and 1 or 1, result.side == "sell" and 0.65 or 0.85, 0.35)
+                row.cells[4]:SetTextColor(result.side == "sell" and 0.45 or 0.35, 1, 0.45)
                 if result.profit and result.profit > 0 then row.cells[5]:SetTextColor(0.35, 1, 0.35) end
                 row:EnableMouse(true)
             elseif result.kind == "order" then
@@ -1185,14 +1198,18 @@ function AHT.UI:ShowOpportunityActions(result)
     MakeDialogMovable(dialog)
     self.actionDialog = dialog
 
-    local title = Label(dialog, result.name or "Marktchance", 420)
+    local selling = result.side == "sell"
+    local title = Label(dialog, (selling and "Verkaufschance: " or "Kaufchance: ") .. (result.name or "Marktchance"), 420)
     title:SetPoint("TOPLEFT", 14, -14)
     title:SetFontObject("GameFontHighlightLarge")
     local info = Label(dialog, string.format(
-        "Einkauf %s | Marktwert %s | Netto %s pro Stück\nRabatt %.1f%% | ROI %.1f%% | bevorzugt: %s",
+        "%s %s | Marktwert %s | %s %s pro Stück\n%s %.1f%% | ROI %.1f%% | bevorzugt: %s",
+        selling and "Verkauf" or "Einkauf",
         AHT:FormatMoneyPlain(result.currentPrice or 0),
         AHT:FormatMoneyPlain(result.marketValue or 0),
+        selling and "Nettoerlös" or "Netto",
         AHT:FormatMoneyPlain(result.profit or 0),
+        selling and "Aufschlag" or "Rabatt",
         result.discount or 0,
         result.roi or 0,
         result.bestMethod or "AH"
@@ -1201,16 +1218,33 @@ function AHT.UI:ShowOpportunityActions(result)
     info:SetHeight(60)
     info:SetJustifyV("TOP")
 
-    local watch = Button(dialog, nil, "Als Material überwachen", 165, 24)
-    watch:SetPoint("BOTTOMLEFT", 14, 12)
-    watch:SetScript("OnClick", function()
-        if AHT.Store then AHT.Store:AddMaterial(result.itemID, result.name) end
-        dialog:Hide()
-        self:SetView("materials")
-    end)
+    local primary
+    if selling then
+        primary = Button(dialog, nil, "Postplan", 105, 24)
+        primary:SetPoint("BOTTOMLEFT", 14, 12)
+        primary:SetScript("OnClick", function()
+            local postResult = result.recipe or {
+                name = result.name,
+                output = { itemID = result.itemID, name = result.name, quantity = 1 },
+                currentSalePrice = result.currentPrice,
+                expectedSalePrice = result.currentPrice,
+                salePrice = result.currentPrice,
+                marketSalePrice = result.marketValue,
+            }
+            self:ShowPostDialog(postResult)
+        end)
+    else
+        primary = Button(dialog, nil, "Als Material überwachen", 165, 24)
+        primary:SetPoint("BOTTOMLEFT", 14, 12)
+        primary:SetScript("OnClick", function()
+            if AHT.Store then AHT.Store:AddMaterial(result.itemID, result.name) end
+            dialog:Hide()
+            self:SetView("materials")
+        end)
+    end
 
     local scan = Button(dialog, nil, "Neu scannen", 100, 24)
-    scan:SetPoint("LEFT", watch, "RIGHT", 8, 0)
+    scan:SetPoint("LEFT", primary, "RIGHT", 8, 0)
     scan:SetScript("OnClick", function()
         if not AHT.AHOpen or not AHT.AH then
             info:SetText("Das Auktionshaus muss für einen Live-Scan geöffnet sein.")

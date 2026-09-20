@@ -2,7 +2,7 @@ WOW4E_AHT = WOW4E_AHT or {}
 local AHT = WOW4E_AHT
 
 AHT.ADDON_NAME = "WOW4E_AH_Trader"
-AHT.VERSION = "0.3.5-beta"
+AHT.VERSION = "0.3.6-beta"
 AHT.AHOpen = false
 AHT.Initialized = false
 AHT.State = {
@@ -132,6 +132,7 @@ function AHT:Initialize()
     if self.Store then self.Store:Load() end
     if self.Capabilities then self.Capabilities:Probe() end
     if self.Inventory then self.Inventory:Initialize() end
+    if self.Tooltips then self.Tooltips:Initialize() end
     if self.Production then self.Production:Initialize() end
     if self.UI then self.UI:Create() end
     if self.Reputation then self.Reputation:Initialize() end
@@ -204,7 +205,9 @@ SlashCmdList.WOW4E_AHT = function(message)
     if command == "" or command == "show" then
         if AHT.UI then AHT.UI:Show() end
     elseif command == "scan" then
-        if AHT.Scanner then AHT.Scanner:Start() end
+        if AHT.Scanner then
+            if string.lower(rest or "") == "all" then AHT.Scanner:StartAll() else AHT.Scanner:Start() end
+        end
     elseif command == "stop" or command == "cancel" then
         if AHT.Scanner then AHT.Scanner:Stop("user") end
         if AHT.Buyer then AHT.Buyer:Cancel("user") end
@@ -240,6 +243,6 @@ SlashCmdList.WOW4E_AHT = function(message)
     elseif command == "post" then
         AHT:Print(AHT.L and AHT.L.postHint or "Posten erfolgt über eine sichtbare Vorschau im Addon.")
     else
-        AHT:Print("/aht | scan | stop | recipes | mats add <Item-Link> | mats remove <Item-Link> | transmute | orders | chancen | ruf | reset | debug")
+        AHT:Print("/aht | scan [all] | stop | recipes | mats add <Item-Link> | mats remove <Item-Link> | transmute | orders | chancen | ruf | reset | debug")
     end
 end

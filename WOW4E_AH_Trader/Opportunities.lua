@@ -29,12 +29,25 @@ function AHT.Opportunities:Build()
     local threshold = (tonumber(settings.dealThresholdPercent) or 20) / 100
     local minimumSamples = tonumber(settings.minMarketSamples) or 2
 
+    local craftCosts = {}
+    for _, result in ipairs(AHT.Calculator and AHT.Calculator.results or {}) do
+        if result.output and result.output.itemID and result.ingredientCost and result.ingredientCost > 0 then
+            craftCosts[tonumber(result.output.itemID)] = {
+                cost = tonumber(result.costPerOutput) or tonumber(result.ingredientCost),
+                result = result,
+            }
+        end
+    end
+
     for _, record in pairs(db.market or {}) do
         local itemID = tonumber(record.itemID)
         local snapshot = itemID and store:GetMarketSnapshot(itemID, record.itemKey)
         local current = snapshot and snapshot.currentPrice
         local market = snapshot and snapshot.marketValue
         local confidenceSamples = snapshot and math.max(snapshot.marketSamples or 0, snapshot.scanSamples or 0) or 0
+
+        -- Buy chance: the latest AH listing is below the robust, history-based
+        -- reference value. This remains conservative and requires confidence.
         if current and market and market > 0 and confidenceSamples >= minimumSamples then
             local discount = (1 - current / market) * 100
             if discount >= threshold then
@@ -49,6 +62,8 @@ function AHT.Opportunities:Build()
                 local profit = bestValue - current
                 table.insert(rows, {
                     kind = "opportunity",
+                    side = "buy",
+                    opportunityType = "Kaufchance",
                     name = record.name or AHT:GetItemInfo(itemID) or tostring(itemID),
                     itemID = itemID,
                     itemKey = record.itemKey,
@@ -70,10 +85,61 @@ function AHT.Opportunities:Build()
                 })
             end
         end
+
+        -- Sell chance: only items actually owned by the character are shown.
+        -- A sale is attractive when the current price is above the robust
+        -- market value, above the craft cost, or clearly above vendor value.
+        local stock = AHT.Inventory and AHT.Inventory:GetCount(itemID) or { total = 0 }
+        local owned = tonumber(stock and stock.total) or 0
+        if current and current > 0 and owned > 0 then
+            local vendor = VendorSellPrice(itemID)
+            local craft = craftCosts[itemID]
+            local costBasis = craft and craft.cost or vendor
+            local sellNet = math.floor(current * (1 - cut))
+            local sellProfit = costBasis and (sellNet - costBasis) or nil
+            local premium = market and market > 0 and (current / market - 1) * 100 or nil
+            local aboveMarket = premium and confidenceSamples >= minimumSamples and premium >= threshold * 100
+            local craftProfitable = sellProfit and craft and sellProfit >= craft.cost * threshold
+            local vendorProfitable = sellProfit and vendor and sellProfit >= vendor * threshold
+            if aboveMarket or craftProfitable or vendorProfitable then
+                table.insert(rows, {
+                    kind = "opportunity",
+                    side = "sell",
+                    opportunityType = "Verkaufschance",
+                    name = record.name or AHT:GetItemInfo(itemID) or tostring(itemID),
+                    itemID = itemID,
+                    itemKey = record.itemKey,
+                    currentPrice = current,
+                    marketValue = market,
+                    averagePrice = snapshot and snapshot.averagePrice,
+                    discount = premium or 0,
+                    profit = sellProfit,
+                    ahProfit = sellProfit,
+                    vendorProfit = vendor and (vendor - (costBasis or 0)) or nil,
+                    roi = costBasis and costBasis > 0 and ((sellNet - costBasis) / costBasis * 100) or 0,
+                    quantity = owned,
+                    stockBags = stock.bags or 0,
+                    stockBank = stock.bank or 0,
+                    bankKnown = stock.bankKnown,
+                    listingCount = snapshot and snapshot.listingCount or 0,
+                    confidence = Confidence(snapshot or {}),
+                    bestMethod = "AH",
+                    p25 = snapshot and snapshot.p25,
+                    p75 = snapshot and snapshot.p75,
+                    updatedAt = snapshot and snapshot.updatedAt,
+                    costBasis = costBasis,
+                    craftCost = craft and craft.cost,
+                    recipe = craft and craft.result,
+                })
+            end
+        end
     end
 
     table.sort(rows, function(a, b)
-        if (a.profit or 0) == (b.profit or 0) then return (a.confidence or 0) > (b.confidence or 0) end
+        if (a.profit or 0) == (b.profit or 0) then
+            if a.side ~= b.side then return a.side == "sell" end
+            return (a.confidence or 0) > (b.confidence or 0)
+        end
         return (a.profit or 0) > (b.profit or 0)
     end)
     self.results = rows
