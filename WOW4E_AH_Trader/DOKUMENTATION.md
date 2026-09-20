@@ -31,6 +31,8 @@ Die Hauptnavigation ist auf die vier täglichen Arbeitsbereiche `Herstellen`, `M
 
 Die Listen verwenden einen dynamischen Zeilenpool. Dadurch bleiben auch mehr als 24 Rezepte, Materialien oder Chancen vollständig sichtbar und scrollbar. Ein Klick auf ein Material öffnet Aktionen für einen Live-Scan oder das Entfernen aus der Überwachung. Dialoge kennzeichnen Mengen und Preise explizit; Preise im Postplan werden weiterhin als Kupfer pro Stück eingegeben.
 
+SavedVariables werden beim Addonstart defensiv validiert. Ein vorübergehend leerer `TRADE_SKILL_LIST_UPDATE`-Event darf den gespeicherten Rezeptkatalog nicht überschreiben; die alten Rezepte bleiben erhalten, bis der Berufskatalog vollständig gelesen werden konnte.
+
 ## Lokale Prüfung
 
 Vor dem Kopieren in den Client kann der statische Audit aus dem Repository ausgeführt werden:

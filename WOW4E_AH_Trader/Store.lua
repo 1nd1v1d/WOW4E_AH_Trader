@@ -62,7 +62,14 @@ local function CopyDefaults(target, defaults)
 end
 
 function AHT.Store:Load()
-    WOW4E_AHT_DB = WOW4E_AHT_DB or {}
+    if type(WOW4E_AHT_DB) ~= "table" then WOW4E_AHT_DB = {} end
+    local tableKeys = {
+        "market", "byItemID", "history", "dailyHistory", "recipes", "materials",
+        "inventory", "production", "ui", "settings",
+    }
+    for _, key in ipairs(tableKeys) do
+        if type(WOW4E_AHT_DB[key]) ~= "table" then WOW4E_AHT_DB[key] = {} end
+    end
     CopyDefaults(WOW4E_AHT_DB, DEFAULT_DB)
     -- Older beta builds kept only 20 snapshots. Move that implicit default
     -- to the larger history window so the weighted average can use more scans.

@@ -112,6 +112,13 @@ function AHT.Recipes:Refresh()
             end
         end
     end
+    -- The Forever client can emit a transient list-update event while the
+    -- profession data is still loading. Never replace a persisted catalog
+    -- with that empty intermediate result.
+    if #newList == 0 then
+        self.refreshing = false
+        return
+    end
     -- Forever exposes recipes per opened profession window. Replace the
     -- currently opened profession while retaining recipes learned from other
     -- professions so the production planner can work across all crafts.

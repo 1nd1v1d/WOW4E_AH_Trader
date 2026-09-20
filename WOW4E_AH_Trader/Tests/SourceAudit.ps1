@@ -55,7 +55,10 @@ $requiredSnippets = @(
     "function AHT.UI:EnsureRows",
     "function AHT.UI:MatchesFilter",
     "self.moreMenu",
-    "AHT.DB.ui.viewMode"
+    "AHT.DB.ui.viewMode",
+    'if type(WOW4E_AHT_DB) ~= "table"',
+    "if #newList == 0 then",
+    "self:Save()"
 )
 foreach ($snippet in $requiredSnippets) {
     if (-not $source.Contains($snippet)) {
