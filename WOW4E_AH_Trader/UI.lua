@@ -152,7 +152,7 @@ local VIEW_INFO = {
     },
     opportunities = {
         title = "Chancen",
-        help = "Kauf- und Verkaufschancen aus aktuellem AH-Preis, robustem Marktwert und deinem Bestand.",
+        help = "AH-Markt-Scan erfasst alle Browse-Items; Chancen entstehen aus aktuellem Preis und robuster Historie.",
     },
     reputation = {
         title = "Ruf",
@@ -328,7 +328,13 @@ function AHT.UI:Create()
     self.scanButton = Button(self.frame, nil, "AH Scan", 100, 24)
     self.scanButton:SetPoint("TOPLEFT", 18, -70)
     self.scanButton:SetScript("OnClick", function()
-        if AHT.Scanner.running then AHT.Scanner:Stop("user") else AHT.Scanner:Start() end
+        if AHT.Scanner.running or AHT.Scanner.marketDiscovery then
+            AHT.Scanner:Stop("user")
+        elseif self.viewMode == "opportunities" then
+            AHT.Scanner:StartMarketDiscovery()
+        else
+            AHT.Scanner:Start()
+        end
         self:RefreshStatus()
     end)
 
@@ -924,6 +930,8 @@ function AHT.UI:RefreshStatus()
     local progress = ""
     if AHT.Scanner and AHT.Scanner.running then
         progress = string.format(" | %d/%d", AHT.Scanner.completed, AHT.Scanner.total)
+    elseif AHT.Scanner and AHT.Scanner.marketDiscovery then
+        progress = string.format(" | %d Items / %d Seiten", AHT.Scanner.marketDiscovery.itemCount or 0, AHT.Scanner.marketDiscovery.pageCount or 0)
     end
     local view = VIEW_INFO[self.viewMode] or VIEW_INFO.recipes
     self.status:SetText("Ansicht: " .. view.title .. " | Status: " .. state .. progress)
@@ -931,7 +939,8 @@ function AHT.UI:RefreshStatus()
     local help = view.help
     if self.lastMessage ~= "" then help = help .. " | " .. self.lastMessage end
     if self.viewHelp then self.viewHelp:SetText(help) end
-    self.scanButton:SetText(AHT.Scanner and AHT.Scanner.running and "Abbrechen" or "AH Scan")
+    local scanning = AHT.Scanner and (AHT.Scanner.running or AHT.Scanner.marketDiscovery)
+    self.scanButton:SetText(scanning and "Abbrechen" or (self.viewMode == "opportunities" and "AH-Markt" or "AH Scan"))
 end
 
 function AHT.UI:BuildMaterialRows()
@@ -981,7 +990,7 @@ function AHT.UI:BuildOpportunityRows()
     if AHT.Calculator then AHT.Calculator:Refresh() end
     local rows = AHT.Opportunities and AHT.Opportunities:Build() or {}
     if #rows == 0 then
-        table.insert(rows, { kind = "info", text = "Keine Kauf- oder Verkaufschance gefunden. AH öffnen und 'AH Scan' ausführen; Verkaufschancen benötigen außerdem Bestand in Tasche oder Bank." })
+        table.insert(rows, { kind = "info", text = "Keine Chance gefunden. In dieser Ansicht 'AH-Markt' ausführen. Der erste Scan inventarisiert alle AH-Browse-Items; belastbare Schnäppchen erscheinen ab dem zweiten Scan mit Historie." })
     end
     return rows
 end

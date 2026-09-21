@@ -2,7 +2,7 @@ WOW4E_AHT = WOW4E_AHT or {}
 local AHT = WOW4E_AHT
 
 AHT.ADDON_NAME = "WOW4E_AH_Trader"
-AHT.VERSION = "0.4.0-beta"
+AHT.VERSION = "0.5.0-beta"
 AHT.AHOpen = false
 AHT.Initialized = false
 AHT.State = {
@@ -29,6 +29,8 @@ local EVENTS = {
     "PLAYERREAGENTBANKSLOTS_CHANGED",
     "AUCTION_HOUSE_SHOW",
     "AUCTION_HOUSE_CLOSED",
+    "AUCTION_HOUSE_BROWSE_RESULTS_UPDATED",
+    "AUCTION_HOUSE_BROWSE_RESULTS_ADDED",
     "TRADE_SKILL_SHOW",
     "TRADE_SKILL_LIST_UPDATE",
     "TRADE_SKILL_CLOSE",
@@ -170,6 +172,7 @@ function AHT:OnEvent(eventName, ...)
         self.AHOpen = false
         self.State.status = "ah_closed"
         if self.AH then self.AH:Cancel("auction_house_closed") end
+        if self.Scanner then self.Scanner:Stop("auction_house_closed") end
         if self.Buyer then self.Buyer:Cancel("auction_house_closed") end
         if self.Poster then self.Poster:Cancel("auction_house_closed") end
         if self.UI then
@@ -179,6 +182,7 @@ function AHT:OnEvent(eventName, ...)
     end
 
     if self.AH then self.AH:OnEvent(eventName, ...) end
+    if self.Scanner then self.Scanner:OnEvent(eventName, ...) end
     if self.Inventory then self.Inventory:OnEvent(eventName, ...) end
     if self.Buyer then self.Buyer:OnEvent(eventName, ...) end
     if self.Production then self.Production:OnEvent(eventName, ...) end
@@ -210,7 +214,14 @@ SlashCmdList.WOW4E_AHT = function(message)
         if AHT.UI then AHT.UI:Show() end
     elseif command == "scan" then
         if AHT.Scanner then
-            if string.lower(rest or "") == "all" then AHT.Scanner:StartAll() else AHT.Scanner:Start() end
+            local scanMode = string.lower(rest or "")
+            if scanMode == "market" or scanMode == "ah" or scanMode == "chancen" then
+                AHT.Scanner:StartMarketDiscovery()
+            elseif scanMode == "all" then
+                AHT.Scanner:StartAll()
+            else
+                AHT.Scanner:Start()
+            end
         end
     elseif command == "stop" or command == "cancel" then
         if AHT.Scanner then AHT.Scanner:Stop("user") end

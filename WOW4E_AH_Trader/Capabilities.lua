@@ -41,7 +41,8 @@ function AHT.Capabilities:Probe()
     }
 
     local ahFunctions = {
-        "MakeItemKey", "SendSearchQuery", "SendBrowseQuery", "GetNumItemSearchResults",
+        "MakeItemKey", "SendSearchQuery", "SendBrowseQuery", "GetBrowseResults",
+        "RequestMoreBrowseResults", "HasFullBrowseResults", "GetNumItemSearchResults",
         "GetItemSearchResultInfo", "GetNumCommoditySearchResults", "GetCommoditySearchResultInfo",
         "PlaceBid", "StartCommoditiesPurchase", "ConfirmCommoditiesPurchase", "CancelCommoditiesPurchase",
         "GetItemCommodityStatus", "PostItem",

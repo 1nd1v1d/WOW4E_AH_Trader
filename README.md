@@ -6,7 +6,7 @@
 
 Ein eigenständiger Auction-House-, Rezept- und Margenanalysator für **World of Warcraft: Forever**. Das Addon ist aus dem ursprünglichen `TWOW_AH_Trader`-Projekt abgeleitet, verwendet aber eine getrennte moderne API-Schicht für die Forever-Beta.
 
-> Status: Beta-Port für Interface `16001` / Version `0.4.0-beta`. Rezept-, Commodity-Kauf- und Post-Events müssen weiterhin im echten Forever-Client verifiziert werden.
+> Status: Beta-Port für Interface `16001` / Version `0.5.0-beta`. Rezept-, Commodity-Kauf- und Post-Events müssen weiterhin im echten Forever-Client verifiziert werden.
 
 ## Funktionen
 
@@ -20,6 +20,7 @@ Ein eigenständiger Auction-House-, Rezept- und Margenanalysator für **World of
 - Materialüberwachung und begrenzte Marktpreis-Historie
 - robuste Marktwerte aus Preisverteilung, altersgewichteten Tagessnapshots, Preisband und Trend
 - Chancenansicht für Kauf- und Verkaufsgelegenheiten mit AH-Gebühr, Liquidität, ROI und NPC-Vergleich
+- vollständiger AH-Markt-Scan über alle Browse-Seiten; Chancen werden nicht mehr auf bekannte Rezept-, Inventar- oder Materialitems begrenzt
 - Kaufpläne für Items und Commodities mit Preisprüfung und sichtbarer Bestätigung
 - berufsübergreifende Herstellungsaufträge mit Mengenempfehlung und Live-Marge
 - automatische gemeinsame Einkaufsliste für alle Rezeptzutaten
@@ -52,6 +53,7 @@ Danach im Client `/reload` ausführen oder den Client neu starten.
 | `/aht` | Hauptfenster öffnen |
 | `/aht scan` | vollständigen Scan der bekannten Items starten |
 | `/aht scan all` | vollständigen Scan ausdrücklich erzwingen |
+| `/aht scan market` | alle Items aus dem AH-Browse-Katalog erfassen und Chancenhistorie aufbauen |
 | `/aht recipes` | gelernte Rezepte ausgeben |
 | `/aht mats add <Item-Link>` | Material zur Überwachung hinzufügen |
 | `/aht mats remove <Item-Link>` | Material entfernen |
@@ -67,7 +69,7 @@ Beim Öffnen des Auktionshauses erscheint ein `AH Trader`-Button direkt unterhal
 
 Beim Überfahren eines Rezepts zeigt ein Kontextfenster die Zutaten, aktuellen Scanpreise, robusten Marktwert, Bestand, Reservierungen und den altersgewichteten Durchschnittspreis. Zusätzlich ergänzt der Standard-Itemtooltip in Taschen, Bank und Berufsansicht dieselben AH-Werte. In der Rezepttabelle ist `Aktuell` immer der letzte AH-Scan; `Marktwert` dient als robuste Orientierung, ob dieser aktuelle Preis über oder unter dem historischen Niveau liegt. Gewinn und Marge verwenden den aktuellen Scan, sofern vorhanden, und fallen nur bei fehlendem aktuellem Scan auf den robusten Marktwert zurück. Der robuste Marktwert basiert auf Preisverteilung und Tagessnapshots; ältere Tage verlieren standardmäßig mit einer Halbwertszeit von sieben Tagen an Einfluss. Materialien zeigen zusätzlich Preisband und Trend und bieten per Klick einen erneuten Scan oder das Entfernen aus der Überwachung.
 
-Die Ansicht `Chancen` enthält zwei klar getrennte Zeilentypen: `Kaufen` für aktuelle Angebote unter dem robusten Marktwert und `Verkaufen` für Items im eigenen Bestand, deren aktueller Nettoerlös über Markt-, Herstellungs- oder Händlervergleich liegt. Sie zeigt Netto-Gewinn, ROI, Bestand, Listing-Anzahl und ein Vertrauensniveau. Ein Klick kann Kaufchancen überwachen bzw. neu scannen oder für Verkaufschancen den Postplan öffnen.
+Die Ansicht `Chancen` enthält zwei klar getrennte Zeilentypen: `Kaufen` für aktuelle Angebote unter dem robusten Marktwert und `Verkaufen` für Items im eigenen Bestand, deren aktueller Nettoerlös über Markt-, Herstellungs- oder Händlervergleich liegt. `AH-Markt` erfasst dafür alle Items aus den Browse-Seiten des offenen AH, nicht nur Rezepte, Inventar und überwachte Materialien. Ein einzelner Scan liefert den aktuellen Bestand; ab dem zweiten Scan kann das Addon für jedes weiterhin angebotene Item eine belastbare Preisabweichung und Preisentwicklung berechnen. Sie zeigt Netto-Gewinn, ROI, Bestand, Listing-Anzahl und ein Vertrauensniveau.
 
 ## Herstellungsaufträge und AutoBuy
 
