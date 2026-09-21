@@ -1608,9 +1608,9 @@ function AHT.UI:ShowAHButton()
     end
     self.ahButton:ClearAllPoints()
     if auctionHouse then
-        -- Keep the button below the AH title bar. The old top-right anchor
-        -- placed it behind the header/search controls in the Forever client.
-        self.ahButton:SetPoint("TOPLEFT", auctionHouse, "TOPLEFT", 92, -50)
+        -- The Forever AH has an empty slot in its title bar on the left. Keep
+        -- the button in that bar so it does not cover the search controls.
+        self.ahButton:SetPoint("TOPLEFT", auctionHouse, "TOPLEFT", 88, -4)
         self.ahButton:SetFrameStrata(auctionHouse:GetFrameStrata() or "HIGH")
         self.ahButton:SetFrameLevel((auctionHouse:GetFrameLevel() or 1) + 10)
     else
@@ -1638,7 +1638,7 @@ function AHT.UI:ShowAHRecipeTab(auctionHouse)
         self.ahRecipeTab:SetParent(auctionHouse)
     end
     self.ahRecipeTab:ClearAllPoints()
-    self.ahRecipeTab:SetPoint("TOPLEFT", auctionHouse, "TOPLEFT", 198, -50)
+    self.ahRecipeTab:SetPoint("TOPLEFT", auctionHouse, "TOPLEFT", 194, -50)
     self.ahRecipeTab:SetFrameStrata(auctionHouse:GetFrameStrata() or "HIGH")
     self.ahRecipeTab:SetFrameLevel((auctionHouse:GetFrameLevel() or 1) + 10)
     self.ahRecipeTab:Show()
