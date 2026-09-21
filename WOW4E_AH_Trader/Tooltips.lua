@@ -5,16 +5,22 @@ AHT.Tooltips = {
     processing = false,
 }
 
-local function AddMarketLines(tooltip)
+local function AddMarketLines(tooltip, itemIDOverride)
     if not tooltip or (tooltip.IsForbidden and tooltip:IsForbidden()) then return end
     if AHT.Tooltips.processing then return end
     if not AHT.GetItemID or not AHT.Store or not AHT.Store.GetMarketSnapshot then return end
 
-    local getItem = tooltip.GetItem
-    if type(getItem) ~= "function" then return end
-    local ok, name, link = pcall(getItem, tooltip)
-    if not ok then return end
-    local itemID = AHT:GetItemID(link) or AHT:GetItemID(name)
+    local itemID = tonumber(itemIDOverride)
+    if not itemID and TooltipUtil and type(TooltipUtil.GetDisplayedItem) == "function" then
+        local ok, _, link, displayedID = pcall(TooltipUtil.GetDisplayedItem, tooltip)
+        if ok then itemID = tonumber(displayedID) or AHT:GetItemID(link) end
+    end
+    -- Legacy Forever builds may not expose TooltipUtil. Keep the old path as
+    -- a guarded fallback, but never assume that GetItem exists.
+    if not itemID and type(tooltip.GetItem) == "function" then
+        local ok, name, link = pcall(tooltip.GetItem, tooltip)
+        if ok then itemID = AHT:GetItemID(link) or AHT:GetItemID(name) end
+    end
     if not itemID then return end
 
     local snapshot = AHT.Store:GetMarketSnapshot(itemID)
@@ -74,13 +80,36 @@ local function AddMarketLines(tooltip)
 end
 
 local function HookTooltip(tooltip)
-    if not tooltip or type(tooltip.HookScript) ~= "function" then return end
-    tooltip:HookScript("OnTooltipSetItem", AddMarketLines)
+    if not tooltip or type(tooltip.HookScript) ~= "function" then return false end
+    -- Forever's current tooltip objects no longer expose the legacy
+    -- OnTooltipSetItem script. Protect this fallback because HookScript throws
+    -- when a script type is unavailable on the client build.
+    local ok = pcall(tooltip.HookScript, tooltip, "OnTooltipSetItem", function(frame)
+        AddMarketLines(frame)
+    end)
+    return ok
 end
 
 function AHT.Tooltips:Initialize()
     if self.initialized then return end
     self.initialized = true
+
+    -- Modern Forever clients use TooltipDataProcessor for item tooltips.
+    -- Register once for the item data type; this covers inventory, bank,
+    -- profession and item-reference tooltips without touching their scripts.
+    local itemType = Enum and Enum.TooltipDataType and Enum.TooltipDataType.Item
+    if TooltipDataProcessor and type(TooltipDataProcessor.AddTooltipPostCall) == "function" and itemType ~= nil then
+        local ok = pcall(TooltipDataProcessor.AddTooltipPostCall, itemType, function(tooltip, data)
+            AddMarketLines(tooltip, data and data.id)
+        end)
+        if ok then
+            self.mode = "data_processor"
+            return
+        end
+    end
+
+    -- Compatibility fallback for older clients that still support the script.
+    self.mode = "legacy"
     HookTooltip(_G.GameTooltip)
     HookTooltip(_G.ItemRefTooltip)
     HookTooltip(_G.ShoppingTooltip1)

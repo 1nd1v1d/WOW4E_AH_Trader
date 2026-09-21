@@ -6,13 +6,14 @@
 
 Ein eigenständiger Auction-House-, Rezept- und Margenanalysator für **World of Warcraft: Forever**. Das Addon ist aus dem ursprünglichen `TWOW_AH_Trader`-Projekt abgeleitet, verwendet aber eine getrennte moderne API-Schicht für die Forever-Beta.
 
-> Status: Beta-Port für Interface `16001` / Version `0.3.8-beta`. Rezept-, Commodity-Kauf- und Post-Events müssen weiterhin im echten Forever-Client verifiziert werden.
+> Status: Beta-Port für Interface `16001` / Version `0.3.9-beta`. Rezept-, Commodity-Kauf- und Post-Events müssen weiterhin im echten Forever-Client verifiziert werden.
 
 ## Funktionen
 
 - modernes `C_AuctionHouse`-Scanning mit Queue, Throttle-Handling, Timeout und Retry
 - kompletter AH-Scan aller bekannten Items aus Taschen, Bank, Berufen, Materialliste und bisheriger Markt-Historie
 - AH-Preiszeilen in Standard-Itemtooltips von Inventar, Bank und Berufsansicht
+- kompatibler TooltipDataProcessor-Hook für die Forever-Beta ohne veralteten `OnTooltipSetItem`-Zugriff
 - aktueller Preis, altersgewichteter Durchschnitt, robuster Marktwert und Preisänderung seit dem letzten Scan in Item-Hovern und Kontextfenstern
 - Shift+Linksklick auf eine Ergebniszeile öffnet das Item über die exakte AH-Suche, ohne das Trader-Fenster zu schließen
 - Rezeptauswertung und Gewinn-/Margenberechnung
