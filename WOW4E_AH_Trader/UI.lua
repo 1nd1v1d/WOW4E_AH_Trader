@@ -18,7 +18,10 @@ local function MakeBackdrop(frame)
             insets = { left = 3, right = 3, top = 3, bottom = 3 },
         })
     end
-    if frame.SetBackdropColor then frame:SetBackdropColor(0.025, 0.018, 0.012, 0.94) end
+    -- The trader UI must remain readable over the game world. Use a fully
+    -- opaque backdrop instead of letting the 0.94 alpha reveal the scene
+    -- behind the main window and its dialogs.
+    if frame.SetBackdropColor then frame:SetBackdropColor(0.025, 0.018, 0.012, 1) end
     if frame.SetBackdropBorderColor then frame:SetBackdropBorderColor(0.75, 0.48, 0.12, 0.95) end
 end
 
