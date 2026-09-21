@@ -78,7 +78,7 @@ local MATERIAL_COLUMNS = {
     { key = "currentPrice", label = "Aktuell", width = 90 },
     { key = "marketValue", label = "Marktwert", width = 95 },
     { key = "averagePrice", label = "Ø AH-Preis", width = 100 },
-    { key = "trendPercent", label = "Trend", width = 70 },
+    { key = "priceChangePercent", label = "Scan-Trend", width = 80 },
     { key = "updatedAt", label = "Letzter Scan", width = 75 },
 }
 
@@ -561,8 +561,22 @@ function AHT.UI:OpenResultInAuctionHouse(result)
     if self.actionDialog then self.actionDialog:Hide() end
     if self.buyDialog then self.buyDialog:Hide() end
     if self.postDialog then self.postDialog:Hide() end
-    if self.frame then self.frame:Hide() end
+    -- Keep the trader window open as requested, but place it below the AH so
+    -- the Blizzard result list remains visible after navigation.
+    self:LowerForAuctionHouse()
     return true
+end
+
+function AHT.UI:LowerForAuctionHouse()
+    if not self.frame then return end
+    self.frame:SetFrameStrata("MEDIUM")
+    if self.frame.SetFrameLevel then self.frame:SetFrameLevel(1) end
+    self.frame:Show()
+end
+
+function AHT.UI:RestoreFrameStrata()
+    if not self.frame then return end
+    self.frame:SetFrameStrata("DIALOG")
 end
 
 function AHT.UI:EnsureRows(count)
@@ -752,6 +766,11 @@ function AHT.UI:ShowRecipeContext(result, owner)
             "Markt/Stk " .. marketText .. " | Ø " .. averageText,
             0.78, 0.78, 0.78, 0.45, 1, 0.45
         )
+        GameTooltip:AddDoubleLine(
+            "  Seit letztem Scan",
+            snapshot and snapshot.priceChangePercent and string.format("%+.1f%%", snapshot.priceChangePercent) or "noch kein Vergleich",
+            0.62, 0.72, 0.95, 0.45, 1, 0.45
+        )
         GameTooltip:AddLine(string.format(
             "  Bestand: Tasche %d | Bank %s | reserviert %d",
             counts.bags or 0,
@@ -771,6 +790,8 @@ function AHT.UI:ShowRecipeContext(result, owner)
         GameTooltip:AddDoubleLine("Aktueller Scan", current and AHT:FormatMoneyPlain(current) or "?", 0.78, 0.78, 0.78, 1, 1, 0.45)
         GameTooltip:AddDoubleLine("Robuster Marktwert", market and AHT:FormatMoneyPlain(market) or "?", 0.78, 0.78, 0.78, 0.45, 0.85, 1)
         GameTooltip:AddDoubleLine("Altersgewichteter Durchschnitt", average and AHT:FormatMoneyPlain(average) or "?", 0.78, 0.78, 0.78, 0.45, 1, 0.45)
+        GameTooltip:AddDoubleLine("Seit letztem Scan", snapshot and snapshot.priceChangePercent and string.format("%+.1f%%", snapshot.priceChangePercent) or "noch kein Vergleich", 0.78, 0.78, 0.78, 0.45, 1, 0.45)
+        GameTooltip:AddDoubleLine("Aktuell vs. Marktwert", snapshot and snapshot.trendPercent and string.format("%+.1f%%", snapshot.trendPercent) or "?", 0.78, 0.78, 0.78, 0.45, 0.85, 1)
     end
 
     local halfLife = AHT.DB and AHT.DB.settings and tonumber(AHT.DB.settings.averageHalfLifeSeconds) or 604800
@@ -799,7 +820,9 @@ function AHT.UI:ShowMaterialContext(result, owner)
     GameTooltip:AddDoubleLine("P25", result.p25 and AHT:FormatMoneyPlain(result.p25) or "?", 0.65, 0.65, 0.65, 0.65, 0.65, 0.65)
     GameTooltip:AddDoubleLine("P75", result.p75 and AHT:FormatMoneyPlain(result.p75) or "?", 0.65, 0.65, 0.65, 0.65, 0.65, 0.65)
     GameTooltip:AddLine(string.format("Angebot: %d Stück / %d Listings", result.totalQuantity or 0, result.listingCount or 0), 0.62, 0.72, 0.95)
-    GameTooltip:AddLine(string.format("Trend: %s | Markt-Tage: %d", result.trendText or "?", result.marketSamples or 0), 0.62, 0.72, 0.95)
+    GameTooltip:AddDoubleLine("Seit letztem Scan", result.priceChangePercent and string.format("%+.1f%%", result.priceChangePercent) or "noch kein Vergleich", 0.78, 0.78, 0.78, 0.45, 1, 0.45)
+    GameTooltip:AddDoubleLine("Aktuell vs. Marktwert", result.marketTrendPercent and string.format("%+.1f%%", result.marketTrendPercent) or "?", 0.78, 0.78, 0.78, 0.45, 0.85, 1)
+    GameTooltip:AddLine(string.format("Markt-Tage: %d | Letzter Scan: %s", result.marketSamples or 0, result.updatedText or "-"), 0.62, 0.72, 0.95)
     GameTooltip:Show()
 end
 
@@ -812,8 +835,11 @@ function AHT.UI:ShowOpportunityContext(result, owner)
     local selling = result.side == "sell"
     GameTooltip:AddLine((selling and "Verkaufschance: " or "Kaufchance: ") .. (result.name or "Chance"), 1, 0.84, 0.35)
     GameTooltip:AddLine("Shift+Linksklick: Item direkt im AH anzeigen", 0.62, 0.72, 0.95)
-    GameTooltip:AddDoubleLine(selling and "Verkauf aktuell" or "Einkauf aktuell", AHT:FormatMoneyPlain(result.currentPrice or 0), 1, 0.85, 0.35, 0.45, 0.85, 1)
-    GameTooltip:AddDoubleLine("Marktwert", AHT:FormatMoneyPlain(result.marketValue or 0), 0.78, 0.78, 0.78, 0.45, 0.85, 1)
+    GameTooltip:AddDoubleLine(selling and "Verkauf aktuell" or "Einkauf aktuell", result.currentPrice and AHT:FormatMoneyPlain(result.currentPrice) or "?", 1, 0.85, 0.35, 0.45, 0.85, 1)
+    GameTooltip:AddDoubleLine("Marktwert", result.marketValue and AHT:FormatMoneyPlain(result.marketValue) or "?", 0.78, 0.78, 0.78, 0.45, 0.85, 1)
+    GameTooltip:AddDoubleLine("Altersgewichteter Ø", result.averagePrice and AHT:FormatMoneyPlain(result.averagePrice) or "?", 0.78, 0.78, 0.78, 0.45, 1, 0.45)
+    GameTooltip:AddDoubleLine("Preisänderung seit letztem Scan", result.priceChangePercent and string.format("%+.1f%%", result.priceChangePercent) or "noch kein Vergleich", 0.78, 0.78, 0.78, 0.45, 1, 0.45)
+    GameTooltip:AddDoubleLine("Aktuell vs. Marktwert", result.trendPercent and string.format("%+.1f%%", result.trendPercent) or "?", 0.78, 0.78, 0.78, 0.45, 0.85, 1)
     GameTooltip:AddDoubleLine(selling and "Nettoerlös pro Stück" or "Netto pro Stück", AHT:FormatMoneyPlain(result.profit or 0), 0.45, 1, 0.45, 0.45, 1, 0.45)
     GameTooltip:AddDoubleLine("ROI", string.format("%.1f%%", result.roi or 0), 0.78, 0.78, 0.78, 0.45, 1, 0.45)
     GameTooltip:AddLine(string.format("%s %.1f%% | Empfehlung: %s", selling and "Aufschlag" or "Rabatt", result.discount or 0, result.bestMethod or "AH"), 0.78, 0.78, 0.78)
@@ -918,7 +944,8 @@ function AHT.UI:BuildMaterialRows()
         local currentPrice = snapshot and snapshot.currentPrice or record and tonumber(record.minPrice) or nil
         local averagePrice = snapshot and snapshot.averagePrice or AHT.Store and AHT.Store:RecencyAverage(material.itemID) or nil
         local marketValue = snapshot and snapshot.marketValue or nil
-        local trendPercent = snapshot and snapshot.trendPercent or nil
+        local priceChangePercent = snapshot and snapshot.priceChangePercent or nil
+        local marketTrendPercent = snapshot and snapshot.trendPercent or nil
         local updatedAt = snapshot and snapshot.updatedAt or record and tonumber(record.updatedAt) or nil
         local updatedText = updatedAt and date("%d.%m.%y", updatedAt) or "-"
         table.insert(rows, {
@@ -928,8 +955,9 @@ function AHT.UI:BuildMaterialRows()
             currentPrice = currentPrice,
             marketValue = marketValue,
             averagePrice = averagePrice,
-            trendPercent = trendPercent,
-            trendText = trendPercent and string.format("%+.1f%%", trendPercent) or "-",
+            priceChangePercent = priceChangePercent,
+            marketTrendPercent = marketTrendPercent,
+            trendText = priceChangePercent and string.format("%+.1f%%", priceChangePercent) or "-",
             p25 = snapshot and snapshot.p25,
             p75 = snapshot and snapshot.p75,
             totalQuantity = snapshot and snapshot.totalQuantity or 0,
@@ -1158,6 +1186,7 @@ end
 
 function AHT.UI:Show()
     if not self.frame then self:Create() end
+    self:RestoreFrameStrata()
     AHT:Refresh()
     self.frame:Show()
 end

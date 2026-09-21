@@ -2,7 +2,7 @@ WOW4E_AHT = WOW4E_AHT or {}
 local AHT = WOW4E_AHT
 
 AHT.ADDON_NAME = "WOW4E_AH_Trader"
-AHT.VERSION = "0.3.7-beta"
+AHT.VERSION = "0.3.8-beta"
 AHT.AHOpen = false
 AHT.Initialized = false
 AHT.State = {
@@ -130,6 +130,7 @@ function AHT:Initialize()
     self.Initialized = true
 
     if self.Store then self.Store:Load() end
+    if self.Recipes and self.Recipes.Load then self.Recipes:Load() end
     if self.Capabilities then self.Capabilities:Probe() end
     if self.Inventory then self.Inventory:Initialize() end
     if self.Tooltips then self.Tooltips:Initialize() end
@@ -171,7 +172,10 @@ function AHT:OnEvent(eventName, ...)
         if self.AH then self.AH:Cancel("auction_house_closed") end
         if self.Buyer then self.Buyer:Cancel("auction_house_closed") end
         if self.Poster then self.Poster:Cancel("auction_house_closed") end
-        if self.UI then self.UI:HideAHButton() end
+        if self.UI then
+            self.UI:HideAHButton()
+            if self.UI.RestoreFrameStrata then self.UI:RestoreFrameStrata() end
+        end
     end
 
     if self.AH then self.AH:OnEvent(eventName, ...) end

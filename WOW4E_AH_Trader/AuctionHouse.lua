@@ -108,8 +108,49 @@ function AHT.AH:OpenItemInAuctionHouse(target)
         "SearchBox", "searchBox", "SearchTextBox", "searchTextBox", "EditBox", "editBox",
     }, "EditBox")
     local searchButton = FindSearchButton(searchBar)
-    local _, itemLink = AHT:GetItemInfo(target.itemID)
-    local query = itemLink or target.name or tostring(target.itemID)
+    local itemName = AHT:GetItemInfo(target.itemID)
+    -- The Blizzard AH browse search expects the resolved item name. Passing a
+    -- raw item hyperlink falls back to an empty/broad browse query on Forever.
+    local query = itemName or target.name or tostring(target.itemID)
+
+    if type(frame.SetDisplayMode) == "function" and type(AuctionHouseFrameDisplayMode) == "table" and AuctionHouseFrameDisplayMode.Buy then
+        pcall(frame.SetDisplayMode, frame, AuctionHouseFrameDisplayMode.Buy)
+    end
+
+    local searchTextSet = false
+    if type(frame.SetSearchText) == "function" then
+        local ok, accepted = pcall(frame.SetSearchText, frame, query)
+        searchTextSet = ok and accepted ~= false
+    elseif searchBar and type(searchBar.SetSearchText) == "function" then
+        local ok = pcall(searchBar.SetSearchText, searchBar, query)
+        searchTextSet = ok
+    end
+
+    local itemKey = target.itemKey or AHT:MakeItemKey(target.itemID)
+    local itemContext
+    if type(AuctionHouseSearchContext) == "table" then
+        local keyInfo
+        if C_AuctionHouse and type(C_AuctionHouse.GetItemKeyInfo) == "function" then
+            local ok, value = pcall(C_AuctionHouse.GetItemKeyInfo, itemKey)
+            if ok then keyInfo = value end
+        end
+        itemContext = keyInfo and keyInfo.isCommodity and AuctionHouseSearchContext.BuyCommodities or AuctionHouseSearchContext.BuyItems
+    end
+
+    -- QueryItem is the client's item-specific path. It updates the AH result
+    -- frame and avoids the broad browse query caused by submitting a blank
+    -- search box.
+    if type(frame.QueryItem) == "function" and itemContext then
+        local ok, result = pcall(frame.QueryItem, frame, itemContext, itemKey, false)
+        -- QueryItem returns nil on a successful query in Blizzard's client.
+        -- Only an explicit false means that this path declined the request.
+        if ok and result ~= false then return true end
+    end
+
+    if searchBar and type(searchBar.StartSearch) == "function" and searchTextSet then
+        local ok = pcall(searchBar.StartSearch, searchBar)
+        if ok then return true end
+    end
 
     if searchBox and searchBox.SetText then
         pcall(searchBox.SetText, searchBox, query)
@@ -144,7 +185,6 @@ function AHT.AH:OpenItemInAuctionHouse(target)
     -- The official result event will still update the AH frame when it listens
     -- to C_AuctionHouse search responses.
     if C_AuctionHouse and C_AuctionHouse.SendSearchQuery then
-        local itemKey = target.itemKey or AHT:MakeItemKey(target.itemID)
         local ok = pcall(C_AuctionHouse.SendSearchQuery, itemKey, { sortOrder = 0, reverseSort = false }, false)
         if ok then return true end
     end

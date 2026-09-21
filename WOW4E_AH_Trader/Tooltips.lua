@@ -32,6 +32,10 @@ local function AddMarketLines(tooltip)
 
     if tooltip.AddLine then tooltip:AddLine("WoW4E AH Trader", 1, 0.84, 0.35) end
     if tooltip.AddDoubleLine then
+        local changeR, changeG = 0.75, 0.75
+        if snapshot.priceChangePercent then
+            if snapshot.priceChangePercent >= 0 then changeR, changeG = 0.45, 1 else changeR, changeG = 1, 0.45 end
+        end
         tooltip:AddDoubleLine(
             "AH aktuell",
             snapshot.currentPrice and AHT:FormatMoneyPlain(snapshot.currentPrice) or "kein Angebot",
@@ -46,6 +50,16 @@ local function AddMarketLines(tooltip)
             "Altersgewichteter Ø",
             snapshot.averagePrice and AHT:FormatMoneyPlain(snapshot.averagePrice) or "?",
             0.78, 0.78, 0.78, 0.45, 1, 0.45
+        )
+        tooltip:AddDoubleLine(
+            "Seit letztem Scan",
+            snapshot.priceChangePercent and string.format("%+.1f%%", snapshot.priceChangePercent) or "noch kein Vergleich",
+            0.78, 0.78, 0.78, changeR, changeG, 0.45
+        )
+        tooltip:AddDoubleLine(
+            "Aktuell vs. Marktwert",
+            snapshot.trendPercent and string.format("%+.1f%%", snapshot.trendPercent) or "?",
+            0.78, 0.78, 0.78, 0.45, 0.85, 1
         )
     end
     if tooltip.AddLine then

@@ -78,11 +78,34 @@ function AHT.Store:Load()
     end
     WOW4E_AHT_DB.schemaVersion = 2
     AHT.DB = WOW4E_AHT_DB
+    self:RebuildIndexes()
     return AHT.DB
 end
 
 function AHT.Store:Save()
-    if AHT.DB then WOW4E_AHT_DB = AHT.DB end
+    if AHT.DB then
+        self:RebuildIndexes()
+        WOW4E_AHT_DB = AHT.DB
+    end
+end
+
+function AHT.Store:RebuildIndexes()
+    if not AHT.DB then return end
+    AHT.DB.market = AHT.DB.market or {}
+    AHT.DB.byItemID = AHT.DB.byItemID or {}
+    -- Older beta snapshots could contain valid market records while the
+    -- byItemID lookup was empty or pointed to a removed key. Rebuild the
+    -- lookup on every load/save so prices remain visible after a restart.
+    for key, record in pairs(AHT.DB.market) do
+        if type(record) == "table" and record.itemID then
+            local itemID = tostring(record.itemID)
+            local indexedKey = AHT.DB.byItemID[itemID]
+            local indexedRecord = indexedKey and AHT.DB.market[indexedKey]
+            if not indexedRecord or tonumber(indexedRecord.itemID) ~= tonumber(record.itemID) then
+                AHT.DB.byItemID[itemID] = key
+            end
+        end
+    end
 end
 
 function AHT.Store:ResetMarket()
@@ -284,6 +307,22 @@ function AHT.Store:RecencyAverage(itemID, itemKey)
     return math.floor(weightedTotal / weight + 0.5), samples
 end
 
+function AHT.Store:GetPriceChange(itemID, itemKey)
+    if not AHT.DB or not AHT.DB.history then return nil, nil end
+    local key = self:MarketKey(itemID, itemKey)
+    local history = key and AHT.DB.history[key]
+    if (not history or #history == 0) and itemID and AHT.DB.byItemID then
+        local fallbackKey = AHT.DB.byItemID[tostring(itemID)]
+        key = fallbackKey or key
+        history = fallbackKey and AHT.DB.history[fallbackKey]
+    end
+    if not history or #history < 2 then return nil, nil end
+    local latest = tonumber(history[#history].p)
+    local previous = tonumber(history[#history - 1].p)
+    if not latest or not previous or previous <= 0 then return nil, previous end
+    return (latest / previous - 1) * 100, previous
+end
+
 function AHT.Store:RobustMarketValue(itemID, itemKey)
     if not AHT.DB then return nil, 0 end
     local key = self:MarketKey(itemID, itemKey)
@@ -325,6 +364,7 @@ function AHT.Store:GetMarketSnapshot(itemID, itemKey)
     local marketValue, marketSamples = self:RobustMarketValue(itemID, itemKey)
     local averagePrice, scanSamples = self:RecencyAverage(itemID, itemKey)
     local currentPrice = tonumber(record.minPrice)
+    local priceChangePercent, previousPrice = self:GetPriceChange(itemID, itemKey)
     local trendPercent
     if currentPrice and marketValue and marketValue > 0 then
         trendPercent = (currentPrice / marketValue - 1) * 100
@@ -342,6 +382,8 @@ function AHT.Store:GetMarketSnapshot(itemID, itemKey)
         p25 = tonumber(record.p25),
         p75 = tonumber(record.p75),
         trendPercent = trendPercent,
+        priceChangePercent = priceChangePercent,
+        previousPrice = previousPrice,
         totalQuantity = tonumber(record.totalQuantity) or 0,
         listingCount = tonumber(record.listingCount) or 0,
         marketSamples = marketSamples or 0,

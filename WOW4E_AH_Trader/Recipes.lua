@@ -2,6 +2,16 @@ local AHT = WOW4E_AHT
 
 AHT.Recipes = { list = {}, refreshing = false }
 
+function AHT.Recipes:Load()
+    self.list = {}
+    for _, recipe in ipairs(AHT.DB and AHT.DB.recipes or {}) do
+        if type(recipe) == "table" and recipe.recipeID and recipe.output and recipe.output.itemID then
+            table.insert(self.list, recipe)
+        end
+    end
+    return self.list
+end
+
 local function AddRecipeID(ids, seen, recipeID)
     if type(recipeID) == "number" and not seen[recipeID] then
         seen[recipeID] = true
@@ -126,8 +136,15 @@ function AHT.Recipes:Refresh()
     for _, recipe in ipairs(newList) do
         if recipe.recipeID then refreshedIDs[recipe.recipeID] = true end
     end
+    local activeProfessionID = tonumber(professionID)
+    local canIdentifyProfession = activeProfessionID and activeProfessionID > 0
     for _, recipe in ipairs(AHT.DB and AHT.DB.recipes or {}) do
-        local sameProfession = professionID and tonumber(recipe.professionID) == tonumber(professionID)
+        local storedProfessionID = tonumber(recipe.professionID)
+        -- Forever can currently report professionID=0. Never interpret that
+        -- as "all stored professions" or opening one profession would erase
+        -- every other persisted recipe catalog.
+        local sameProfession = canIdentifyProfession and storedProfessionID and
+            storedProfessionID > 0 and storedProfessionID == activeProfessionID
         if not sameProfession and recipe.recipeID and not refreshedIDs[recipe.recipeID] and not seen[recipe.recipeID] then
             seen[recipe.recipeID] = true
             table.insert(merged, recipe)
