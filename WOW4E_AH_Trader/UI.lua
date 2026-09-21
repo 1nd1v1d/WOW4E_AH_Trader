@@ -507,6 +507,12 @@ function AHT.UI:CreateRow(index)
         row.cells[cellIndex] = text
     end
     row:SetScript("OnClick", function(_, button)
+        if button == "LeftButton" and type(IsControlKeyDown) == "function" and IsControlKeyDown() then
+            if row.result and row.result.output and #(row.result.reagents or {}) > 0 then
+                self:OpenRecipeInAuctionHouse(row.result)
+            end
+            return
+        end
         if button == "LeftButton" and type(IsShiftKeyDown) == "function" and IsShiftKeyDown() then
             if row.result and row.result.kind ~= "info" and row.result.kind ~= "order" then
                 self:OpenResultInAuctionHouse(row.result)
@@ -586,6 +592,393 @@ end
 function AHT.UI:RestoreFrameStrata()
     if not self.frame then return end
     self.frame:SetFrameStrata("DIALOG")
+end
+
+function AHT.UI:CreateAHRecipePanel(auctionHouse)
+    if self.ahRecipePanel and self.ahRecipePanel:GetParent() == auctionHouse then return end
+    local template = BackdropTemplateMixin and "BackdropTemplate" or nil
+    local panel = CreateFrame("Frame", nil, auctionHouse, template)
+    panel:SetPoint("TOPLEFT", auctionHouse, "TOPLEFT", 16, -88)
+    panel:SetPoint("BOTTOMRIGHT", auctionHouse, "BOTTOMRIGHT", -16, 46)
+    panel:SetFrameStrata(auctionHouse:GetFrameStrata() or "HIGH")
+    panel:SetFrameLevel((auctionHouse:GetFrameLevel() or 1) + 30)
+    panel:EnableMouse(true)
+    MakeBackdrop(panel)
+    self.ahRecipePanel = panel
+
+    panel.title = Label(panel, "AHT Rezept- und Materialansicht", 620)
+    panel.title:SetPoint("TOPLEFT", 16, -14)
+    panel.title:SetFontObject("GameFontHighlightLarge")
+    panel.title:SetTextColor(1, 0.84, 0.35)
+
+    panel.craftLabel = Label(panel, "Herstellvorgänge:", 120)
+    panel.craftLabel:SetPoint("TOPLEFT", 16, -50)
+    panel.craftInput = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
+    panel.craftInput:SetSize(64, 24)
+    panel.craftInput:SetPoint("LEFT", panel.craftLabel, "RIGHT", 8, 0)
+    panel.craftInput:SetAutoFocus(false)
+    panel.craftInput:SetNumeric(true)
+    panel.craftInput:SetText("1")
+    panel.craftInput:SetScript("OnTextChanged", function(box)
+        if self.ahRecipeUpdating then return end
+        self.ahCraftCrafts = math.max(1, tonumber(box:GetText()) or 1)
+        self:RecalculateAHRecipeEntries()
+        self:RenderAHRecipePanel()
+    end)
+
+    panel.refresh = Button(panel, nil, "Listings aktualisieren", 140, 24)
+    panel.refresh:SetPoint("LEFT", panel.craftInput, "RIGHT", 12, 0)
+    panel.refresh:SetScript("OnClick", function()
+        if self.ahCraftRecipe then self:StartAHRecipeListingScan(self.ahCraftRecipe) end
+    end)
+
+    panel.close = Button(panel, nil, CLOSE or "Close", 80, 24)
+    panel.close:SetPoint("TOPRIGHT", -14, -12)
+    panel.close:SetScript("OnClick", function() panel:Hide() end)
+
+    panel.summary = Label(panel, "", 720)
+    panel.summary:SetPoint("TOPLEFT", 16, -82)
+    panel.summary:SetTextColor(0.82, 0.75, 0.58)
+
+    panel.status = Label(panel, "", 720)
+    panel.status:SetPoint("TOPLEFT", 16, -104)
+    panel.status:SetTextColor(0.55, 0.82, 0.95)
+
+    panel.scroll = CreateFrame("ScrollFrame", nil, panel, "UIPanelScrollFrameTemplate")
+    panel.scroll:SetPoint("TOPLEFT", 16, -128)
+    panel.scroll:SetPoint("BOTTOMRIGHT", -34, 14)
+    panel.content = CreateFrame("Frame", nil, panel.scroll)
+    panel.content:SetSize(700, 420)
+    panel.scroll:SetScrollChild(panel.content)
+    panel.rows = {}
+    panel:Hide()
+end
+
+function AHT.UI:CreateAHRecipeRow(index)
+    local panel = self.ahRecipePanel
+    local row = CreateFrame("Frame", nil, panel.content)
+    row:SetHeight(76)
+    row.bg = row:CreateTexture(nil, "BACKGROUND")
+    row.bg:SetAllPoints()
+    row.bg:SetColorTexture(index % 2 == 0 and 0.07 or 0.095, 0.045, 0.02, 1)
+    row.title = row:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+    row.title:SetPoint("TOPLEFT", 10, -8)
+    row.title:SetPoint("TOPRIGHT", -140, -8)
+    row.title:SetJustifyH("LEFT")
+    row.details = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    row.details:SetPoint("TOPLEFT", 10, -28)
+    row.details:SetPoint("TOPRIGHT", -140, -28)
+    row.details:SetJustifyH("LEFT")
+    row.listings = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    row.listings:SetPoint("TOPLEFT", 10, -48)
+    row.listings:SetPoint("TOPRIGHT", -140, -48)
+    row.listings:SetJustifyH("LEFT")
+    row.buy = Button(row, nil, "Kaufen", 112, 25)
+    row.buy:SetPoint("TOPRIGHT", -12, -10)
+    row.buy:SetScript("OnClick", function()
+        if row.entry then self:BuyAHRecipeMaterial(row.entry) end
+    end)
+    panel.rows[index] = row
+    return row
+end
+
+local function AHRecipeListingText(entry)
+    if entry.loading then return "Listings werden geladen …" end
+    if not entry.loaded then return "Listings noch nicht geladen." end
+    if entry.error then return "Listing-Suche fehlgeschlagen: " .. tostring(entry.error) end
+    if not entry.results or #entry.results == 0 then return "Keine aktuellen Listings." end
+    local parts = {}
+    for index = 1, math.min(#entry.results, 8) do
+        local listing = entry.results[index]
+        table.insert(parts, string.format(
+            "%dx %s",
+            tonumber(listing.quantity) or 0,
+            AHT:FormatMoneyPlain(listing.unitPrice or 0)
+        ))
+    end
+    if #entry.results > 8 then table.insert(parts, "…") end
+    return "Listings: " .. table.concat(parts, " | ")
+end
+
+function AHT.UI:RecalculateAHRecipeEntries()
+    local crafts = math.max(1, tonumber(self.ahCraftCrafts) or 1)
+    for _, entry in ipairs(self.ahCraftMaterials or {}) do
+        local counts = AHT.Inventory and AHT.Inventory:GetCount(entry.itemID) or { bags = 0, bank = 0, total = 0, bankKnown = false }
+        entry.required = (tonumber(entry.quantityPerCraft) or 1) * crafts
+        entry.bags = counts.bags or 0
+        entry.bank = counts.bank or 0
+        entry.bankKnown = counts.bankKnown
+        entry.owned = counts.total or 0
+        entry.toBuy = math.max(0, entry.required - entry.owned - (entry.purchasedQuantity or 0))
+        entry.plan = nil
+        entry.estimated = nil
+        if entry.loaded and entry.results and entry.toBuy > 0 and AHT.Buyer then
+            entry.cheapest = entry.results[1] and entry.results[1].unitPrice or nil
+            if entry.cheapest and entry.cheapest > 0 then
+                entry.plan = AHT.Buyer:BuildPlan(entry.results, entry.toBuy, entry.cheapest)
+                entry.estimated = entry.plan.total
+            end
+        end
+    end
+end
+
+function AHT.UI:RenderAHRecipePanel()
+    local panel = self.ahRecipePanel
+    local recipe = self.ahCraftRecipe
+    if not panel or not recipe then return end
+    local crafts = math.max(1, tonumber(self.ahCraftCrafts) or 1)
+    local output = self.ahCraftOutput
+    panel.title:SetText("AHT Rezept: " .. tostring(recipe.name or "Herstellung"))
+    panel.summary:SetText(string.format(
+        "%dx Herstellung | Ergebnis: %dx %s",
+        crafts,
+        tonumber(output and output.quantity) or 1,
+        tostring(output and output.name or "?")
+    ))
+
+    local width = math.max(500, (panel:GetWidth() or 760) - 52)
+    panel.content:SetWidth(width)
+    local offset = 0
+    local function AddHeading(slot, text)
+        local heading = panel[slot]
+        if not heading then
+            heading = panel.content:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+            heading:SetWidth(width - 20)
+            heading:SetJustifyH("LEFT")
+            heading:SetTextColor(1, 0.84, 0.35)
+            panel[slot] = heading
+        end
+        heading:ClearAllPoints()
+        heading:SetPoint("TOPLEFT", 10, -offset - 2)
+        heading:SetText(text)
+        offset = offset + 24
+    end
+
+    AddHeading("outputHeading", "Ergebnis-Listings")
+    local outputEntry = self.ahCraftOutput
+    local outputRow = self.ahRecipeOutputRow
+    if not outputRow then
+        outputRow = CreateFrame("Frame", nil, panel.content)
+        outputRow.bg = outputRow:CreateTexture(nil, "BACKGROUND")
+        outputRow.bg:SetAllPoints()
+        outputRow.bg:SetColorTexture(0.055, 0.07, 0.09, 1)
+        outputRow.title = outputRow:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+        outputRow.title:SetPoint("TOPLEFT", 10, -8)
+        outputRow.title:SetWidth(width - 20)
+        outputRow.details = outputRow:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+        outputRow.details:SetPoint("TOPLEFT", 10, -30)
+        outputRow.details:SetWidth(width - 20)
+        outputRow.listings = outputRow:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+        outputRow.listings:SetPoint("TOPLEFT", 10, -50)
+        outputRow.listings:SetWidth(width - 20)
+        self.ahRecipeOutputRow = outputRow
+    end
+    outputRow:SetPoint("TOPLEFT", 0, -offset)
+    outputRow:SetSize(width, 72)
+    outputRow.title:SetText(tostring(outputEntry and outputEntry.name or "?"))
+    outputRow.details:SetText(outputEntry and outputEntry.loaded and
+        string.format("Aktuell: %s | Gesamtmenge im AH: %d", outputEntry.results[1] and AHT:FormatMoneyPlain(outputEntry.results[1].unitPrice or 0) or "?", outputEntry.meta and outputEntry.meta.totalQuantity or 0) or
+        "Suche aktuelle Listings …")
+    outputRow.listings:SetText(AHRecipeListingText(outputEntry or {}))
+    outputRow:Show()
+    offset = offset + 80
+
+    AddHeading("materialHeading", "Benötigte Materialien und Kaufoptionen")
+    for index, entry in ipairs(self.ahCraftMaterials or {}) do
+        local row = panel.rows[index] or self:CreateAHRecipeRow(index)
+        row.entry = entry
+        row:SetPoint("TOPLEFT", 0, -offset)
+        row:SetWidth(width)
+        row.title:SetText(string.format(
+            "%s | benötigt: %d | Bestand: %d | zu kaufen: %d",
+            tostring(entry.name or entry.itemID),
+            entry.required or 0,
+            entry.owned or 0,
+            entry.toBuy or 0
+        ))
+        local bankText = entry.bankKnown and tostring(entry.bank or 0) or "?"
+        local estimate = entry.estimated and AHT:FormatMoneyPlain(entry.estimated) or "?"
+        row.details:SetText(string.format(
+            "pro Herstellung: %d | Tasche: %d | Bank: %s | geschätzt: %s",
+            entry.quantityPerCraft or 1, entry.bags or 0, bankText, estimate
+        ))
+        row.listings:SetText(AHRecipeListingText(entry))
+        if entry.buyState == "confirm" then
+            row.buy:SetText("Preis bestätigen")
+            row.buy:Enable()
+        elseif entry.buyState == "buying" or entry.buyState == "submitted" then
+            row.buy:SetText("Kauf läuft …")
+            row.buy:Disable()
+        elseif entry.buyState == "done" or (entry.toBuy or 0) <= 0 then
+            row.buy:SetText("Bestand reicht")
+            row.buy:Disable()
+        elseif not entry.loaded then
+            row.buy:SetText("Lade …")
+            row.buy:Disable()
+        elseif not entry.plan or entry.plan.missing > 0 then
+            row.buy:SetText("Nicht genug")
+            row.buy:Disable()
+        else
+            row.buy:SetText("Kaufen")
+            row.buy:Enable()
+        end
+        row:Show()
+        offset = offset + 82
+    end
+    for index = #(self.ahCraftMaterials or {}) + 1, #panel.rows do panel.rows[index]:Hide() end
+    panel.content:SetHeight(math.max(300, offset + 12))
+    panel.status:SetText(self.ahRecipeStatus or "")
+end
+
+function AHT.UI:StartAHRecipeListingScan(recipe)
+    if not AHT.AHOpen then
+        self.ahRecipeStatus = "Das Auktionshaus muss geöffnet sein."
+        self:RenderAHRecipePanel()
+        return false
+    end
+    local panel = self.ahRecipePanel
+    if not panel then return false end
+    self.ahRecipeSearchSerial = (self.ahRecipeSearchSerial or 0) + 1
+    local serial = self.ahRecipeSearchSerial
+    self.ahCraftCrafts = math.max(1, tonumber(self.ahCraftCrafts) or 1)
+    self.ahCraftOutput = {
+        kind = "output",
+        itemID = recipe.output.itemID,
+        itemKey = recipe.output.itemKey,
+        name = recipe.output.name or AHT:GetItemInfo(recipe.output.itemID),
+        quantity = recipe.output.quantity or 1,
+        loaded = false,
+    }
+    local materials, byItemID = {}, {}
+    for _, reagent in ipairs(recipe.reagents or {}) do
+        local itemID = tonumber(reagent.itemID)
+        if itemID then
+            local entry = byItemID[itemID]
+            if not entry then
+                entry = {
+                    kind = "material",
+                    itemID = itemID,
+                    itemKey = reagent.itemKey,
+                    name = reagent.name or AHT:GetItemInfo(itemID) or tostring(itemID),
+                    quantityPerCraft = 0,
+                    loaded = false,
+                }
+                byItemID[itemID] = entry
+                table.insert(materials, entry)
+            end
+            entry.quantityPerCraft = entry.quantityPerCraft + (tonumber(reagent.quantity) or 1)
+        end
+    end
+    self.ahCraftMaterials = materials
+    self.ahCraftEntries = { self.ahCraftOutput }
+    for _, entry in ipairs(materials) do table.insert(self.ahCraftEntries, entry) end
+    self.ahRecipeStatus = "Suche aktuelle Listings für Ergebnis und Materialien …"
+    self:RecalculateAHRecipeEntries()
+    self:RenderAHRecipePanel()
+
+    local index = 1
+    local function Next()
+        if serial ~= self.ahRecipeSearchSerial then return end
+        local entry = self.ahCraftEntries[index]
+        if not entry then
+            self.ahRecipeStatus = "Listings vollständig geladen."
+            self:RecalculateAHRecipeEntries()
+            self:RenderAHRecipePanel()
+            return
+        end
+        entry.loading = true
+        self:RenderAHRecipePanel()
+        AHT.AH:Search({ itemID = entry.itemID, itemKey = entry.itemKey, name = entry.name, kind = entry.kind }, function(results, meta)
+            if serial ~= self.ahRecipeSearchSerial then return end
+            entry.loading = false
+            entry.loaded = true
+            entry.results = results or {}
+            entry.meta = meta or {}
+            if entry.results[1] and entry.results[1].itemKey then entry.itemKey = entry.results[1].itemKey end
+            if meta and meta.error then entry.error = meta.error end
+            index = index + 1
+            self:RecalculateAHRecipeEntries()
+            self:RenderAHRecipePanel()
+            Next()
+        end)
+    end
+    Next()
+    return true
+end
+
+function AHT.UI:BuyAHRecipeMaterial(entry)
+    if not entry or entry.kind ~= "material" then return false end
+    if entry.buyState == "confirm" then
+        if AHT.Buyer and AHT.Buyer:ConfirmCommodity() then
+            entry.buyState = "submitted"
+            self:RenderAHRecipePanel()
+            return true
+        end
+        return false
+    end
+    if AHT.Buyer and AHT.Buyer.pending then
+        self.ahRecipeStatus = "Es läuft bereits ein anderer Kauf."
+        self:RenderAHRecipePanel()
+        return false
+    end
+    self:RecalculateAHRecipeEntries()
+    local plan = entry.plan
+    if not plan or plan.missing > 0 then return false end
+    plan.target = { itemID = entry.itemID, itemKey = entry.itemKey, name = entry.name, kind = "unknown" }
+    plan.maxUnitPrice = entry.cheapest
+    entry.buyState = "buying"
+    entry.error = nil
+    self:RenderAHRecipePanel()
+    local started = AHT.Buyer:Confirm(plan, function(state, data)
+        if state == "price" then
+            entry.buyState = "confirm"
+        elseif state == "submitted" then
+            entry.buyState = "submitted"
+        elseif state == "completed" then
+            entry.buyState = "done"
+            entry.purchasedQuantity = (entry.purchasedQuantity or 0) + (tonumber(data and data.purchasedQuantity) or tonumber(plan.plannedQuantity) or 0)
+        elseif state == "error" then
+            entry.buyState = nil
+            entry.error = tostring(data or "Kauf fehlgeschlagen")
+        end
+        self:RecalculateAHRecipeEntries()
+        self:RenderAHRecipePanel()
+    end)
+    if not started then
+        entry.buyState = nil
+        self:RenderAHRecipePanel()
+    end
+    return started
+end
+
+function AHT.UI:OpenRecipeInAuctionHouse(result)
+    if not result or not result.output or #(result.reagents or {}) == 0 then return false end
+    if not AHT.AHOpen then
+        AHT:Print("Bitte zuerst das Auktionshaus öffnen.")
+        return false
+    end
+    self:HideRecipeContext()
+    if self.actionDialog then self.actionDialog:Hide() end
+    if self.buyDialog then self.buyDialog:Hide() end
+    if self.postDialog then self.postDialog:Hide() end
+    if self.frame then self.frame:Hide() end
+    self.ahCraftRecipe = result
+    self.ahCraftCrafts = 1
+    self:ShowAHRecipePanel(result, true)
+    return true
+end
+
+function AHT.UI:ShowAHRecipePanel(recipe, refresh)
+    local auctionHouse = _G.AuctionHouseFrame
+    if not auctionHouse then return false end
+    self:ShowAHButton()
+    self:CreateAHRecipePanel(auctionHouse)
+    self.ahCraftRecipe = recipe or self.ahCraftRecipe
+    if not self.ahCraftRecipe then return false end
+    self.ahRecipePanel:Show()
+    if self.ahRecipeTab then self.ahRecipeTab:SetText("AHT Rezept") end
+    if refresh then self:StartAHRecipeListingScan(self.ahCraftRecipe) else self:RenderAHRecipePanel() end
+    return true
 end
 
 function AHT.UI:EnsureRows(count)
@@ -754,6 +1147,7 @@ function AHT.UI:ShowRecipeContext(result, owner)
     GameTooltip:AddLine(result.name or "Rezept", 1, 0.84, 0.35)
     GameTooltip:AddLine("Zutaten und Marktpreise", 0.8, 0.75, 0.55)
     GameTooltip:AddLine("Shift+Linksklick: Ergebnis direkt im AH anzeigen", 0.62, 0.72, 0.95)
+    GameTooltip:AddLine("Strg+Linksklick: Rezept- und Material-Listings im AHT-Reiter", 0.62, 0.72, 0.95)
     GameTooltip:AddLine(" ")
 
     for _, reagent in ipairs(result.reagents or {}) do
@@ -1224,10 +1618,41 @@ function AHT.UI:ShowAHButton()
         self.ahButton:SetFrameStrata("HIGH")
     end
     self.ahButton:Show()
+    if auctionHouse then self:ShowAHRecipeTab(auctionHouse) end
+end
+
+function AHT.UI:ShowAHRecipeTab(auctionHouse)
+    if not auctionHouse then return end
+    if not self.ahRecipeTab then
+        self.ahRecipeTab = Button(auctionHouse, "WOW4E_AH_Trader_RecipeTab", "AHT Rezept", 106, 24)
+        self.ahRecipeTab:SetScript("OnClick", function()
+            if self.ahRecipePanel and self.ahRecipePanel:IsShown() then
+                self.ahRecipePanel:Hide()
+            elseif self.ahCraftRecipe then
+                self:ShowAHRecipePanel(self.ahCraftRecipe, false)
+            else
+                AHT:Print("Strg+Linksklick auf ein herstellbares Ergebnis lädt hier ein Rezept.")
+            end
+        end)
+    else
+        self.ahRecipeTab:SetParent(auctionHouse)
+    end
+    self.ahRecipeTab:ClearAllPoints()
+    self.ahRecipeTab:SetPoint("TOPLEFT", auctionHouse, "TOPLEFT", 198, -50)
+    self.ahRecipeTab:SetFrameStrata(auctionHouse:GetFrameStrata() or "HIGH")
+    self.ahRecipeTab:SetFrameLevel((auctionHouse:GetFrameLevel() or 1) + 10)
+    self.ahRecipeTab:Show()
+end
+
+function AHT.UI:HideAHRecipePanel()
+    self.ahRecipeSearchSerial = (self.ahRecipeSearchSerial or 0) + 1
+    if self.ahRecipePanel then self.ahRecipePanel:Hide() end
 end
 
 function AHT.UI:HideAHButton()
     if self.ahButton then self.ahButton:Hide() end
+    if self.ahRecipeTab then self.ahRecipeTab:Hide() end
+    self:HideAHRecipePanel()
 end
 
 function AHT.UI:ShowRecipeActions(result)

@@ -6,7 +6,7 @@
 
 Ein eigenständiger Auction-House-, Rezept- und Margenanalysator für **World of Warcraft: Forever**. Das Addon ist aus dem ursprünglichen `TWOW_AH_Trader`-Projekt abgeleitet, verwendet aber eine getrennte moderne API-Schicht für die Forever-Beta.
 
-> Status: Beta-Port für Interface `16001` / Version `0.5.0-beta`. Rezept-, Commodity-Kauf- und Post-Events müssen weiterhin im echten Forever-Client verifiziert werden.
+> Status: Beta-Port für Interface `16001` / Version `0.6.0-beta`. Rezept-, Commodity-Kauf- und Post-Events müssen weiterhin im echten Forever-Client verifiziert werden.
 
 ## Funktionen
 
@@ -16,6 +16,7 @@ Ein eigenständiger Auction-House-, Rezept- und Margenanalysator für **World of
 - kompatibler TooltipDataProcessor-Hook für die Forever-Beta ohne veralteten `OnTooltipSetItem`-Zugriff
 - aktueller Preis, altersgewichteter Durchschnitt, robuster Marktwert und Preisänderung seit dem letzten Scan in Item-Hovern und Kontextfenstern
 - Shift+Linksklick auf eine Ergebniszeile öffnet das Item über die exakte AH-Suche, ohne das Trader-Fenster zu schließen
+- Strg+Linksklick auf ein herstellbares Ergebnis öffnet im AH einen Reiter mit Ergebnis-/Material-Listings, Bedarf, Tasche/Bankbestand und separaten Kaufaktionen
 - Rezeptauswertung und Gewinn-/Margenberechnung
 - Materialüberwachung und begrenzte Marktpreis-Historie
 - robuste Marktwerte aus Preisverteilung, altersgewichteten Tagessnapshots, Preisband und Trend
@@ -66,6 +67,8 @@ Danach im Client `/reload` ausführen oder den Client neu starten.
 | `/aht reset` | gespeicherte Marktdaten löschen |
 
 Beim Öffnen des Auktionshauses erscheint ein `AH Trader`-Button direkt unterhalb der AH-Titelleiste. Die Hauptnavigation fokussiert `Herstellen`, `Markt`, `Aufträge` und `Chancen`; `Ruf` und `Diagnose` liegen unter `Mehr`, damit der Arbeitsbereich nicht mit seltenen Funktionen überladen wird. Die Suche filtert die sichtbare Liste nach Name, Item-ID und Beruf; `Nur profitabel` grenzt zusätzlich auf positive Chancen ein. Jede sichtbare Tabellenüberschrift ist anklickbar und sortiert ihre Spalte. Fensterposition, Größe, Ansicht und Sortierung werden gespeichert. Die Tabellenzeilen wachsen dynamisch mit der Ergebnisliste.
+
+Bei herstellbaren Ergebnissen öffnet `Strg+Linksklick` den Reiter `AHT Rezept` direkt im geöffneten Auktionshaus. Er zeigt die aktuellen Listings des Ergebnisses und jeder benötigten Zutat, die benötigte Menge pro Herstellvorgang und für die gewählte Gesamtmenge, Taschen-/Bankbestand, den voraussichtlichen Einkaufspreis sowie eine eigene `Kaufen`-Schaltfläche je Material. Die Kaufprüfung läuft über dieselbe Live-Preis- und Mengenbestätigung wie AutoBuy; vor dem finalen Commodity-Kauf bleibt die sichtbare Blizzard-Bestätigung erforderlich. Über `Herstellvorgänge` kann die Einkaufsliste ohne erneuten Rezeptscan neu berechnet werden.
 
 Beim Überfahren eines Rezepts zeigt ein Kontextfenster die Zutaten, aktuellen Scanpreise, robusten Marktwert, Bestand, Reservierungen und den altersgewichteten Durchschnittspreis. Zusätzlich ergänzt der Standard-Itemtooltip in Taschen, Bank und Berufsansicht dieselben AH-Werte. In der Rezepttabelle ist `Aktuell` immer der letzte AH-Scan; `Marktwert` dient als robuste Orientierung, ob dieser aktuelle Preis über oder unter dem historischen Niveau liegt. Gewinn und Marge verwenden den aktuellen Scan, sofern vorhanden, und fallen nur bei fehlendem aktuellem Scan auf den robusten Marktwert zurück. Der robuste Marktwert basiert auf Preisverteilung und Tagessnapshots; ältere Tage verlieren standardmäßig mit einer Halbwertszeit von sieben Tagen an Einfluss. Materialien zeigen zusätzlich Preisband und Trend und bieten per Klick einen erneuten Scan oder das Entfernen aus der Überwachung.
 

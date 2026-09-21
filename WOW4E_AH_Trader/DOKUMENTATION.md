@@ -31,6 +31,8 @@ Die Hauptnavigation ist auf die vier täglichen Arbeitsbereiche `Herstellen`, `M
 
 Die Listen verwenden einen dynamischen Zeilenpool. Dadurch bleiben auch mehr als 24 Rezepte, Materialien oder Chancen vollständig sichtbar und scrollbar. Ein Klick auf ein Material öffnet Aktionen für einen Live-Scan oder das Entfernen aus der Überwachung. Dialoge kennzeichnen Mengen und Preise explizit; Preise im Postplan werden weiterhin als Kupfer pro Stück eingegeben. Alle Rezept-, Kauf-, Auftrags- und Postdialoge lassen sich an ihrer Titelleiste verschieben; beim Wechsel vom Rezeptaktionsfenster zum Postplan wird das Vorgängerfenster ausgeblendet.
 
+`Strg+Linksklick` auf ein herstellbares Ergebnis öffnet im geöffneten Auktionshaus den Reiter `AHT Rezept`. Dort werden Ergebnis- und Material-Listings parallel geladen. Die Materialzeilen zeigen die Menge pro Herstellung, die Gesamtanforderung, Taschen-/Bankbestand, den Restbedarf und eine kaufbare Planung auf Basis der günstigsten aktuellen Listings. Die Schaltfläche `Kaufen` prüft die Listings unmittelbar vor dem Kauf erneut; die finale Commodity-Preisbestätigung bleibt sichtbar und benutzerbestätigt. Der Reiter kann über `AHT Rezept` neben dem `AH Trader`-Button erneut geöffnet werden.
+
 SavedVariables werden beim Addonstart defensiv validiert. Ein vorübergehend leerer `TRADE_SKILL_LIST_UPDATE`-Event darf den gespeicherten Rezeptkatalog nicht überschreiben; die alten Rezepte bleiben erhalten, bis der Berufskatalog vollständig gelesen werden konnte.
 
 ## Lokale Prüfung
