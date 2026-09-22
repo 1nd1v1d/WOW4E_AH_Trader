@@ -18,10 +18,10 @@ local function MakeBackdrop(frame)
             insets = { left = 3, right = 3, top = 3, bottom = 3 },
         })
     end
-    -- The trader UI must remain readable over the game world. Use a fully
-    -- opaque backdrop instead of letting the 0.94 alpha reveal the scene
-    -- behind the main window and its dialogs.
-    if frame.SetBackdropColor then frame:SetBackdropColor(0.025, 0.018, 0.012, 1) end
+    -- Every addon window is intentionally fully opaque black. The Blizzard
+    -- dialog texture is still used for its border, but it must not reveal the
+    -- game world or the AH behind the window.
+    if frame.SetBackdropColor then frame:SetBackdropColor(0, 0, 0, 1) end
     if frame.SetBackdropBorderColor then frame:SetBackdropBorderColor(0.75, 0.48, 0.12, 0.95) end
 end
 
@@ -594,16 +594,19 @@ function AHT.UI:RestoreFrameStrata()
     self.frame:SetFrameStrata("DIALOG")
 end
 
-function AHT.UI:CreateAHRecipePanel(auctionHouse)
-    if self.ahRecipePanel and self.ahRecipePanel:GetParent() == auctionHouse then return end
+function AHT.UI:CreateAHRecipePanel()
+    if self.ahRecipePanel then return end
     local template = BackdropTemplateMixin and "BackdropTemplate" or nil
-    local panel = CreateFrame("Frame", nil, auctionHouse, template)
-    panel:SetPoint("TOPLEFT", auctionHouse, "TOPLEFT", 16, -88)
-    panel:SetPoint("BOTTOMRIGHT", auctionHouse, "BOTTOMRIGHT", -16, 46)
-    panel:SetFrameStrata(auctionHouse:GetFrameStrata() or "HIGH")
-    panel:SetFrameLevel((auctionHouse:GetFrameLevel() or 1) + 30)
+    local panel = CreateFrame("Frame", nil, UIParent, template)
+    panel:SetSize(900, 620)
+    panel:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    panel:SetFrameStrata("DIALOG")
+    panel:SetFrameLevel(220)
+    if panel.SetToplevel then panel:SetToplevel(true) end
     panel:EnableMouse(true)
+    if panel.SetClampedToScreen then panel:SetClampedToScreen(true) end
     MakeBackdrop(panel)
+    MakeDialogMovable(panel)
     self.ahRecipePanel = panel
 
     panel.title = Label(panel, "AHT Rezept- und Materialansicht", 620)
@@ -635,7 +638,7 @@ function AHT.UI:CreateAHRecipePanel(auctionHouse)
     panel.close = Button(panel, nil, CLOSE or "Close", 80, 24)
     panel.close:SetPoint("TOPRIGHT", -14, -12)
     panel.close:SetScript("OnClick", function()
-        panel:Hide()
+        self:HideAHRecipePanel()
         if self.ahRecipeTab then self.ahRecipeTab:Hide() end
     end)
 
@@ -806,7 +809,10 @@ function AHT.UI:RenderAHRecipePanel()
             entry.quantityPerCraft or 1, entry.bags or 0, bankText, estimate
         ))
         row.listings:SetText(AHRecipeListingText(entry))
-        if entry.buyState == "confirm" then
+        if not AHT.AHOpen then
+            row.buy:SetText("AH geschlossen")
+            row.buy:Disable()
+        elseif entry.buyState == "confirm" then
             row.buy:SetText("Preis bestätigen")
             row.buy:Enable()
         elseif entry.buyState == "buying" or entry.buyState == "submitted" then
@@ -973,13 +979,13 @@ end
 
 function AHT.UI:ShowAHRecipePanel(recipe, refresh)
     local auctionHouse = _G.AuctionHouseFrame
-    if not auctionHouse then return false end
+    if not self.ahRecipePanel then self:CreateAHRecipePanel() end
     self:ShowAHButton()
-    self:CreateAHRecipePanel(auctionHouse)
     self.ahCraftRecipe = recipe or self.ahCraftRecipe
     if not self.ahCraftRecipe then return false end
-    self:ShowAHRecipeTab(auctionHouse)
+    if auctionHouse then self:ShowAHRecipeTab(auctionHouse) end
     self.ahRecipePanel:Show()
+    if self.ahRecipePanel.Raise then self.ahRecipePanel:Raise() end
     if self.ahRecipeTab then self.ahRecipeTab:SetText("AHT Rezept") end
     if refresh then self:StartAHRecipeListingScan(self.ahCraftRecipe) else self:RenderAHRecipePanel() end
     return true
@@ -1656,18 +1662,25 @@ function AHT.UI:ShowAHRecipeTab(auctionHouse)
 end
 
 function AHT.UI:HideAHRecipePanel()
-    self.ahRecipeSearchSerial = (self.ahRecipeSearchSerial or 0) + 1
+    self:CancelAHRecipeScan()
     if self.ahRecipePanel then self.ahRecipePanel:Hide() end
+end
+
+function AHT.UI:CancelAHRecipeScan()
+    self.ahRecipeSearchSerial = (self.ahRecipeSearchSerial or 0) + 1
 end
 
 function AHT.UI:HideAHButton()
     if self.ahButton then self.ahButton:Hide() end
     if self.ahRecipeTab then self.ahRecipeTab:Hide() end
-    self:HideAHRecipePanel()
-    self.ahCraftRecipe = nil
-    self.ahCraftOutput = nil
-    self.ahCraftMaterials = nil
-    self.ahCraftEntries = nil
+    -- The recipe window is independent of the Blizzard AH frame. Keep it
+    -- open with its cached listings when the AH closes, but stop live scans
+    -- and make its purchase controls reflect that the AH is unavailable.
+    self:CancelAHRecipeScan()
+    if self.ahRecipePanel and self.ahRecipePanel:IsShown() then
+        self.ahRecipeStatus = "Auktionshaus geschlossen. Gecachte Listings bleiben sichtbar."
+        self:RenderAHRecipePanel()
+    end
 end
 
 function AHT.UI:ShowRecipeActions(result)

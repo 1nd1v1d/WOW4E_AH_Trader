@@ -2,7 +2,7 @@ WOW4E_AHT = WOW4E_AHT or {}
 local AHT = WOW4E_AHT
 
 AHT.ADDON_NAME = "WOW4E_AH_Trader"
-AHT.VERSION = "0.6.3-beta"
+AHT.VERSION = "0.6.4-beta"
 AHT.AHOpen = false
 AHT.Initialized = false
 AHT.State = {
@@ -171,6 +171,7 @@ function AHT:OnEvent(eventName, ...)
     elseif eventName == "AUCTION_HOUSE_CLOSED" then
         self.AHOpen = false
         self.State.status = "ah_closed"
+        if self.UI and self.UI.CancelAHRecipeScan then self.UI:CancelAHRecipeScan() end
         if self.AH then self.AH:Cancel("auction_house_closed") end
         if self.Scanner then self.Scanner:Stop("auction_house_closed") end
         if self.Buyer then self.Buyer:Cancel("auction_house_closed") end
