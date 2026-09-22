@@ -38,6 +38,7 @@ $requiredSnippets = @(
     "C_AuctionHouse.GetCommoditySearchResultInfo",
     "C_AuctionHouse.StartCommoditiesPurchase",
     "C_AuctionHouse.ConfirmCommoditiesPurchase",
+    "function AHT.Store:EnsureLoaded",
     "function AHT.Buyer:StartPendingPurchase",
     'self.pending.state = "ready_to_buy"',
     'pending.state = "awaiting_completion"',

@@ -244,6 +244,7 @@ function AHT.UI:RefreshControls()
 end
 
 function AHT.UI:SetView(viewMode)
+    if not AHT.Initialized and AHT.Initialize then AHT:Initialize() end
     self.viewMode = VIEW_INFO[viewMode] and viewMode or "recipes"
     if not self.frame then self:Create() end
     if self.moreMenu then self.moreMenu:Hide() end
@@ -1634,6 +1635,7 @@ function AHT.UI:Refresh(skipCalculator)
 end
 
 function AHT.UI:Show()
+    if not AHT.Initialized and AHT.Initialize then AHT:Initialize() end
     if not self.frame then self:Create() end
     self:RestoreFrameStrata()
     AHT:Refresh()

@@ -91,6 +91,15 @@ function AHT.Store:Save()
     end
 end
 
+function AHT.Store:EnsureLoaded()
+    if type(AHT.DB) ~= "table" or type(AHT.DB.market) ~= "table" or
+            type(AHT.DB.byItemID) ~= "table" or type(AHT.DB.history) ~= "table" then
+        if type(WOW4E_AHT_DB) ~= "table" then return false end
+        self:Load()
+    end
+    return type(AHT.DB) == "table"
+end
+
 function AHT.Store:RebuildIndexes()
     if not AHT.DB then return end
     AHT.DB.market = AHT.DB.market or {}
@@ -124,10 +133,12 @@ end
 
 function AHT.Store:Get(itemID, itemKey)
     local key = self:MarketKey(itemID, itemKey)
+    if not key or not self:EnsureLoaded() or type(AHT.DB.market) ~= "table" then return nil, key end
     return key and AHT.DB.market[key], key
 end
 
 function AHT.Store:GetByItemID(itemID)
+    if not self:EnsureLoaded() or type(AHT.DB.market) ~= "table" or type(AHT.DB.byItemID) ~= "table" then return nil end
     local key = AHT.DB.byItemID[tostring(itemID)]
     return key and AHT.DB.market[key], key
 end
@@ -175,6 +186,7 @@ function AHT.Store:CalculatePriceStats(prices)
 end
 
 function AHT.Store:RecordMarket(target, result)
+    if not self:EnsureLoaded() then return nil end
     local key = self:MarketKey(target.itemID, target.itemKey)
     if not key then return nil end
     local now = AHT:Now()
@@ -251,6 +263,7 @@ function AHT.Store:RecordMarket(target, result)
 end
 
 function AHT.Store:Average(key)
+    if not self:EnsureLoaded() then return nil end
     local history = AHT.DB.history[key]
     if not history or #history == 0 then return nil end
     local total = 0
@@ -259,6 +272,7 @@ function AHT.Store:Average(key)
 end
 
 function AHT.Store:WeightedAverage(key)
+    if not self:EnsureLoaded() then return nil end
     local history = AHT.DB.history[key]
     if not history or #history == 0 then return nil end
     local weightedTotal, weight = 0, 0
@@ -281,7 +295,7 @@ function AHT.Store:WeightedAverage(key)
 end
 
 function AHT.Store:RecencyAverage(itemID, itemKey)
-    if not AHT.DB or not AHT.DB.history then return nil, 0 end
+    if not self:EnsureLoaded() then return nil, 0 end
     local key = self:MarketKey(itemID, itemKey)
     local history = key and AHT.DB.history[key]
     if (not history or #history == 0) and itemID and AHT.DB.byItemID then
@@ -310,7 +324,7 @@ function AHT.Store:RecencyAverage(itemID, itemKey)
 end
 
 function AHT.Store:GetPriceChange(itemID, itemKey)
-    if not AHT.DB or not AHT.DB.history then return nil, nil end
+    if not self:EnsureLoaded() then return nil, nil end
     local key = self:MarketKey(itemID, itemKey)
     local history = key and AHT.DB.history[key]
     if (not history or #history == 0) and itemID and AHT.DB.byItemID then
@@ -326,7 +340,7 @@ function AHT.Store:GetPriceChange(itemID, itemKey)
 end
 
 function AHT.Store:RobustMarketValue(itemID, itemKey)
-    if not AHT.DB then return nil, 0 end
+    if not self:EnsureLoaded() then return nil, 0 end
     local key = self:MarketKey(itemID, itemKey)
     local daily = key and AHT.DB.dailyHistory[key]
     if (not daily or #daily == 0) and itemID and AHT.DB.byItemID then
@@ -396,6 +410,7 @@ function AHT.Store:GetMarketSnapshot(itemID, itemKey)
 end
 
 function AHT.Store:IsDeal(key, currentPrice)
+    if not self:EnsureLoaded() then return false end
     local record = key and AHT.DB.market[key]
     local marketValue, samples = record and self:RobustMarketValue(record.itemID, record.itemKey)
     local _, scanSamples = record and self:RecencyAverage(record.itemID, record.itemKey)
@@ -406,15 +421,21 @@ function AHT.Store:IsDeal(key, currentPrice)
 end
 
 function AHT.Store:AddMaterial(itemID, name)
+    if not self:EnsureLoaded() then return false end
+    AHT.DB.materials = AHT.DB.materials or {}
     AHT.DB.materials[tostring(itemID)] = {
         itemID = itemID,
         name = name or tostring(itemID),
         enabled = true,
     }
     self:Save()
+    return true
 end
 
 function AHT.Store:RemoveMaterial(itemID)
+    if not self:EnsureLoaded() then return false end
+    AHT.DB.materials = AHT.DB.materials or {}
     AHT.DB.materials[tostring(itemID)] = nil
     self:Save()
+    return true
 end
