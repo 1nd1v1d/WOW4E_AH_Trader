@@ -237,6 +237,7 @@ local function ReadReagents(recipeID)
 end
 
 function AHT.Recipes:Refresh()
+    if not AHT.Initialized and AHT.Initialize then AHT:Initialize(true) end
     if self.refreshing or not C_TradeSkillUI then return end
     if AHT.Store and AHT.Store.EnsureLoaded and not AHT.Store:EnsureLoaded() then return end
     self.refreshing = true

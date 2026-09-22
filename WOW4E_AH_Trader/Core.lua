@@ -2,7 +2,7 @@ WOW4E_AHT = WOW4E_AHT or {}
 local AHT = WOW4E_AHT
 
 AHT.ADDON_NAME = "WOW4E_AH_Trader"
-AHT.VERSION = "0.7.0-beta"
+AHT.VERSION = "0.7.1-beta"
 AHT.AHOpen = false
 AHT.Initialized = false
 AHT.State = {
@@ -33,6 +33,9 @@ local EVENTS = {
     "AUCTION_HOUSE_BROWSE_RESULTS_ADDED",
     "TRADE_SKILL_SHOW",
     "TRADE_SKILL_LIST_UPDATE",
+    "TRADE_SKILL_DATA_SOURCE_CHANGED",
+    "TRADE_SKILL_RECIPE_LIST_UPDATE",
+    "TRADE_SKILL_UPDATE",
     "TRADE_SKILL_CLOSE",
     "UPDATE_FACTION",
     "ITEM_SEARCH_RESULTS_UPDATED",
@@ -127,14 +130,20 @@ function AHT:CallSafely(label, fn, ...)
     return true, a, b, c, d
 end
 
-function AHT:Initialize()
+function AHT:Initialize(allowEmpty)
     if self.Initialized then return end
     -- Some Forever beta builds can deliver ADDON_LOADED before the
     -- SavedVariables table is available. Do not create an empty database in
     -- that window; PLAYER_LOGIN/PLAYER_ENTERING_WORLD retries initialization.
     if type(WOW4E_AHT_DB) ~= "table" then
-        self.State.status = "waiting_for_saved_variables"
-        return false
+        if not allowEmpty then
+            self.State.status = "waiting_for_saved_variables"
+            return false
+        end
+        -- A genuinely new profile has no SavedVariables table yet. Create it
+        -- only after the login/UI phase, so a delayed SavedVariables load can
+        -- still win during ADDON_LOADED.
+        WOW4E_AHT_DB = {}
     end
     self.Initialized = true
 
@@ -163,7 +172,7 @@ function AHT:OnEvent(eventName, ...)
     end
 
     if eventName == "PLAYER_LOGIN" or eventName == "PLAYER_ENTERING_WORLD" then
-        if not self.Initialized then self:Initialize() end
+        if not self.Initialized then self:Initialize(true) end
         return
     end
 
@@ -198,7 +207,11 @@ function AHT:OnEvent(eventName, ...)
     if self.Poster then self.Poster:OnEvent(eventName, ...) end
     if self.Reputation then self.Reputation:OnEvent(eventName, ...) end
 
-    if eventName == "TRADE_SKILL_SHOW" or eventName == "TRADE_SKILL_LIST_UPDATE" then
+    if eventName == "TRADE_SKILL_SHOW" or eventName == "TRADE_SKILL_LIST_UPDATE" or
+            eventName == "TRADE_SKILL_DATA_SOURCE_CHANGED" or
+            eventName == "TRADE_SKILL_RECIPE_LIST_UPDATE" or
+            eventName == "TRADE_SKILL_UPDATE" then
+        if not self.Initialized then self:Initialize(true) end
         if self.Recipes then self.Recipes:Refresh() end
     elseif eventName == "TRADE_SKILL_CLOSE" then
         self.State.status = self.AHOpen and "ah_open" or "ready"
