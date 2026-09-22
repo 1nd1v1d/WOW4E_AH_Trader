@@ -2,7 +2,7 @@ WOW4E_AHT = WOW4E_AHT or {}
 local AHT = WOW4E_AHT
 
 AHT.ADDON_NAME = "WOW4E_AH_Trader"
-AHT.VERSION = "0.6.7-beta"
+AHT.VERSION = "0.6.8-beta"
 AHT.AHOpen = false
 AHT.Initialized = false
 AHT.State = {
@@ -129,6 +129,13 @@ end
 
 function AHT:Initialize()
     if self.Initialized then return end
+    -- Some Forever beta builds can deliver ADDON_LOADED before the
+    -- SavedVariables table is available. Do not create an empty database in
+    -- that window; PLAYER_LOGIN/PLAYER_ENTERING_WORLD retries initialization.
+    if type(WOW4E_AHT_DB) ~= "table" then
+        self.State.status = "waiting_for_saved_variables"
+        return false
+    end
     self.Initialized = true
 
     if self.Store then self.Store:Load() end
@@ -145,6 +152,7 @@ function AHT:Initialize()
     if self.Capabilities then
         self:Print(self.Capabilities:Summary())
     end
+    return true
 end
 
 function AHT:OnEvent(eventName, ...)

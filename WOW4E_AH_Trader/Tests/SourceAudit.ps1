@@ -64,6 +64,7 @@ $requiredSnippets = @(
     "RememberProfession",
     "recipeIndex",
     "self:Save()",
+    "waiting_for_saved_variables",
     "result.currentSalePrice = result.salePrice",
     "result.expectedSalePrice = result.currentSalePrice or result.marketSalePrice",
     'label = "Marktwert"',
