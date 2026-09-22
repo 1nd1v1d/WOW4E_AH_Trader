@@ -238,6 +238,7 @@ end
 
 function AHT.Recipes:Refresh()
     if self.refreshing or not C_TradeSkillUI then return end
+    if AHT.Store and AHT.Store.EnsureLoaded and not AHT.Store:EnsureLoaded() then return end
     self.refreshing = true
     local newList = {}
     local professionID, professionName = ReadProfessionInfo()

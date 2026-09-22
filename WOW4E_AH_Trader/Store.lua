@@ -92,8 +92,20 @@ function AHT.Store:Save()
 end
 
 function AHT.Store:EnsureLoaded()
-    if type(AHT.DB) ~= "table" or type(AHT.DB.market) ~= "table" or
-            type(AHT.DB.byItemID) ~= "table" or type(AHT.DB.history) ~= "table" then
+    local requiredTables = {
+        "market", "byItemID", "history", "dailyHistory", "recipes", "recipeIndex", "professions",
+        "materials", "inventory", "production", "ui", "settings",
+    }
+    local needsLoad = type(AHT.DB) ~= "table"
+    if not needsLoad then
+        for _, key in ipairs(requiredTables) do
+            if type(AHT.DB[key]) ~= "table" then
+                needsLoad = true
+                break
+            end
+        end
+    end
+    if needsLoad then
         if type(WOW4E_AHT_DB) ~= "table" then return false end
         self:Load()
     end

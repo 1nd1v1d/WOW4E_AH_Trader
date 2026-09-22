@@ -85,6 +85,10 @@ function AHT.Scanner:StartMarketDiscovery()
         AHT:Print(AHT.L.noAH)
         return false
     end
+    if AHT.Store and AHT.Store.EnsureLoaded and not AHT.Store:EnsureLoaded() then
+        AHT:Print("AH-Markt-Scan konnte nicht gestartet werden: Datenbank nicht geladen.")
+        return false
+    end
     if not C_AuctionHouse or type(C_AuctionHouse.SendBrowseQuery) ~= "function" or
             type(C_AuctionHouse.GetBrowseResults) ~= "function" then
         AHT:Print("Der Forever-Client unterstützt keinen vollständigen AH-Markt-Scan.")
@@ -117,6 +121,7 @@ function AHT.Scanner:FinishMarketDiscovery()
     local discovery = self.marketDiscovery
     if not discovery then return end
     self.marketDiscovery = nil
+    if AHT.Store then AHT.Store:Save() end
     AHT.State.status = AHT.AHOpen and "ah_open" or "ready"
     AHT:Print(string.format("AH-Markt-Scan abgeschlossen: %d Items inventarisiert.", discovery.itemCount or 0))
     if AHT.UI then
@@ -214,6 +219,10 @@ function AHT.Scanner:Start(targets)
         AHT:Print(AHT.L.noAH)
         return
     end
+    if AHT.Store and AHT.Store.EnsureLoaded and not AHT.Store:EnsureLoaded() then
+        AHT:Print("AH-Scan konnte nicht gestartet werden: Datenbank nicht geladen.")
+        return
+    end
     targets = targets or self:BuildTargets()
     self.mode = self.mode or "all"
     self.queue = targets
@@ -234,6 +243,7 @@ function AHT.Scanner:Next()
     local target = table.remove(self.queue, 1)
     if not target then
         self.running = false
+        if AHT.Store then AHT.Store:Save() end
         AHT.State.status = AHT.AHOpen and "ah_open" or "ready"
         AHT:Print(string.format(AHT.L.scanDone, self.completed))
         AHT:Refresh()
