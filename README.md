@@ -6,7 +6,7 @@
 
 Ein eigenständiger Auction-House-, Rezept- und Margenanalysator für **World of Warcraft: Forever**. Das Addon ist aus dem ursprünglichen `TWOW_AH_Trader`-Projekt abgeleitet, verwendet aber eine getrennte moderne API-Schicht für die Forever-Beta.
 
-> Status: Beta-Port für Interface `16001` / Version `0.6.4-beta`. Rezept-, Commodity-Kauf- und Post-Events müssen weiterhin im echten Forever-Client verifiziert werden.
+> Status: Beta-Port für Interface `16001` / Version `0.6.5-beta`. Rezept-, Commodity-Kauf- und Post-Events müssen weiterhin im echten Forever-Client verifiziert werden.
 
 ## Funktionen
 
@@ -86,7 +86,8 @@ Die Rezeptliste zeigt eine konservative Mengenempfehlung sowie die erwartete Mar
 - zieht verfügbare Gegenstände aus Taschen und persönlicher beziehungsweise Reagenzienbank ab,
 - berücksichtigt Materialreservierungen anderer aktiver Aufträge,
 - prüft die fehlenden Mengen und Preisstufen live im Forever-Auktionshaus,
-- kauft die Zutaten in einer geführten Warteschlange,
+- wartet danach auf einen zweiten direkten Klick auf `Kauf auslösen` (damit der geschützte AH-Kauf im Benutzer-Event läuft),
+- kauft die Zutaten in einer geführten Warteschlange; Commodities verlangen zusätzlich die sichtbare Preisbestätigung,
 - speichert gekaufte Menge und Kosten beim zugehörigen Auftrag.
 
 Aktive Aufträge bleiben in der Ansicht `Aufträge` erhalten. `Hergestellt` gibt ihre Materialreservierungen frei; `Stornieren` verwirft den Auftrag ebenfalls. Bankbestände werden beim Öffnen der Bank aktualisiert. Ist noch kein Banksnapshot verfügbar, zeigt das Addon den Bankwert als unbekannt an.
@@ -99,7 +100,7 @@ Runenstoff wird über Item-ID `14047` erkannt. Der Preis wird bevorzugt als gewi
 
 ## Sicherheitsmodell
 
-Alle AH-Anfragen laufen über eine zentrale Queue. Der AutoBuy übernimmt Suche, Mengenplanung, Reservierungen und den Wechsel zur nächsten Zutat. Forever verlangt für den finalen Commodity-Preis weiterhin eine sichtbare Bestätigung; Itemauktionen werden ebenfalls nicht ohne Benutzeraktion ausgelöst. Preis und Menge werden unmittelbar vor jedem Kauf erneut geprüft. Beim Posten werden Bestand, Preis, Laufzeit und Deposit unmittelbar vor dem API-Aufruf erneut geprüft.
+Alle AH-Anfragen laufen über eine zentrale Queue. Der AutoBuy übernimmt Suche, Mengenplanung, Reservierungen und den Wechsel zur nächsten Zutat. Nach der asynchronen Live-Prüfung muss der Nutzer `Kauf auslösen` anklicken; dadurch werden geschützte AH-Kaufaufrufe innerhalb eines direkten Benutzer-Events ausgeführt. Forever verlangt für den finalen Commodity-Preis weiterhin eine sichtbare Bestätigung; Itemauktionen werden ebenfalls nicht ohne Benutzeraktion ausgelöst. Preis und Menge werden unmittelbar vor jedem Kauf erneut geprüft. Beim Posten werden Bestand, Preis, Laufzeit und Deposit unmittelbar vor dem API-Aufruf erneut geprüft.
 
 ## Projektstruktur
 

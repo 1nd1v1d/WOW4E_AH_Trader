@@ -101,9 +101,24 @@ function AHT.Buyer:Confirm(plan, callback)
         refreshed.maxUnitPrice = maxUnitPrice
         refreshed.requirementItemID = plan.requirementItemID
         self.pending.plan = refreshed
-        self:Execute(refreshed)
+        -- The live search finishes asynchronously. Protected auction-house
+        -- purchase APIs must be called by a later direct button click.
+        self.pending.state = "ready_to_buy"
+        self.pending.startedAt = GetTime and GetTime() or self.pending.startedAt
+        self:Notify("ready", refreshed)
     end)
     return true
+end
+
+function AHT.Buyer:StartPendingPurchase()
+    local pending = self.pending
+    if not pending or pending.state ~= "ready_to_buy" or not pending.plan then
+        return false
+    end
+    -- Call this only from a visible user action. Execute contains the
+    -- protected Blizzard API calls.
+    self:Execute(pending.plan)
+    return self.pending ~= nil and self.pending.state ~= "ready_to_buy"
 end
 
 function AHT.Buyer:Execute(plan)
@@ -124,19 +139,21 @@ function AHT.Buyer:Execute(plan)
         self.pending.itemID = first.itemID
         self.pending.maxTotal = plan.total
         self.pending.quantity = quantity
-        if not C_AuctionHouse.StartCommoditiesPurchase then
+        if not C_AuctionHouse or not C_AuctionHouse.StartCommoditiesPurchase then
             AHT:Print("Commodity-Kauf-API fehlt.")
             self:Finish("error", "commodity_purchase_api_missing")
-            return
+            return false
         end
         local ok, err = pcall(C_AuctionHouse.StartCommoditiesPurchase, first.itemID, quantity)
         if not ok then
             AHT:Print("Commodity-Kauf fehlgeschlagen: " .. tostring(err))
             self:Finish("error", tostring(err or "commodity_purchase_failed"))
+            return false
         end
+        return true
     else
         local totalPrice = first.buyoutAmount
-        if not first.auctionID or not totalPrice or not C_AuctionHouse.PlaceBid then
+        if not first.auctionID or not totalPrice or not C_AuctionHouse or not C_AuctionHouse.PlaceBid then
             AHT:Print("Item-Kaufdaten unvollständig.")
             self:Finish("error", "item_purchase_data_missing")
             return
@@ -149,10 +166,12 @@ function AHT.Buyer:Execute(plan)
         if not ok then
             AHT:Print("Item-Kauf fehlgeschlagen: " .. tostring(err))
             self:Finish("error", tostring(err or "item_purchase_failed"))
+            return false
         else
             AHT:Print("Kauf ausgelöst: " .. AHT:FormatMoney(totalPrice))
             self.pending.state = "awaiting_completion"
             self:Notify("submitted", plan)
+            return true
         end
     end
 end

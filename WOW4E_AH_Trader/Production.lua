@@ -36,7 +36,7 @@ function AHT.Production:Initialize()
     AHT.DB.production.purchases = AHT.DB.production.purchases or {}
     for _, order in pairs(AHT.DB.production.orders) do
         if order.status == "buying" or order.status == "checking" or
-                order.status == "awaiting_confirmation" or order.status == "submitted" then
+                order.status == "awaiting_purchase" or order.status == "awaiting_confirmation" or order.status == "submitted" then
             order.status = "paused"
         end
     end
@@ -420,7 +420,12 @@ end
 
 function AHT.Production:OnBuyerState(order, requirement, state, data)
     if not IsActive(order) then return end
-    if state == "price" then
+    if state == "ready" then
+        order.status = "awaiting_purchase"
+        order.updatedAt = AHT:Now()
+        AHT.Store:Save()
+        self:Notify("ready", { order = order, requirement = requirement, purchase = data })
+    elseif state == "price" then
         order.status = "awaiting_confirmation"
         order.updatedAt = AHT:Now()
         AHT.Store:Save()
@@ -475,6 +480,11 @@ end
 function AHT.Production:ConfirmCurrentCommodity()
     if not self.active or not AHT.Buyer then return false end
     return AHT.Buyer:ConfirmCommodity()
+end
+
+function AHT.Production:StartCurrentPurchase()
+    if not self.active or not AHT.Buyer then return false end
+    return AHT.Buyer:StartPendingPurchase()
 end
 
 function AHT.Production:ResultFromOrder(orderOrID)

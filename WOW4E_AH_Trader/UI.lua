@@ -815,6 +815,12 @@ function AHT.UI:RenderAHRecipePanel()
         elseif entry.buyState == "confirm" then
             row.buy:SetText("Preis bestätigen")
             row.buy:Enable()
+        elseif entry.buyState == "ready" then
+            row.buy:SetText("Kauf auslösen")
+            row.buy:Enable()
+        elseif entry.buyState == "checking" then
+            row.buy:SetText("Preisprüfung …")
+            row.buy:Disable()
         elseif entry.buyState == "buying" or entry.buyState == "submitted" then
             row.buy:SetText("Kauf läuft …")
             row.buy:Disable()
@@ -925,6 +931,17 @@ function AHT.UI:BuyAHRecipeMaterial(entry)
         end
         return false
     end
+    if entry.buyState == "ready" then
+        entry.buyState = "buying"
+        if AHT.Buyer and AHT.Buyer:StartPendingPurchase() then
+            self:RenderAHRecipePanel()
+            return true
+        end
+        entry.buyState = nil
+        entry.error = "Kauf konnte nicht ausgelöst werden. Bitte erneut prüfen."
+        self:RenderAHRecipePanel()
+        return false
+    end
     if AHT.Buyer and AHT.Buyer.pending then
         self.ahRecipeStatus = "Es läuft bereits ein anderer Kauf."
         self:RenderAHRecipePanel()
@@ -935,11 +952,13 @@ function AHT.UI:BuyAHRecipeMaterial(entry)
     if not plan or plan.missing > 0 then return false end
     plan.target = { itemID = entry.itemID, itemKey = entry.itemKey, name = entry.name, kind = "unknown" }
     plan.maxUnitPrice = entry.cheapest
-    entry.buyState = "buying"
+    entry.buyState = "checking"
     entry.error = nil
     self:RenderAHRecipePanel()
     local started = AHT.Buyer:Confirm(plan, function(state, data)
-        if state == "price" then
+        if state == "ready" then
+            entry.buyState = "ready"
+        elseif state == "price" then
             entry.buyState = "confirm"
         elseif state == "submitted" then
             entry.buyState = "submitted"
@@ -1408,6 +1427,7 @@ function AHT.UI:BuildOrderRows()
         incomplete = "Unvollständig",
         checking = "Live-Prüfung",
         buying = "Kauf läuft",
+        awaiting_purchase = "Kauf auslösen",
         awaiting_confirmation = "Bestätigung nötig",
         submitted = "Kauf gesendet",
         next_ready = "Nächste Zutat",
@@ -1919,7 +1939,10 @@ function AHT.UI:ShowBuyDialog(result, existingOrder)
         end
         cancelOrder:Enable()
         local status = dialog.order.status
-        if status == "awaiting_confirmation" then
+        if status == "awaiting_purchase" then
+            action:SetText("Kauf auslösen")
+            action:Enable()
+        elseif status == "awaiting_confirmation" then
             action:SetText("Kauf bestätigen")
             action:Enable()
         elseif status == "ready_to_craft" then
@@ -1978,6 +2001,15 @@ function AHT.UI:ShowBuyDialog(result, existingOrder)
 
     action:SetScript("OnClick", function()
         if not dialog.order then return end
+        if AHT.Buyer and AHT.Buyer.pending and AHT.Buyer.pending.state == "ready_to_buy" then
+            action:Disable()
+            action:SetText("Kauf wird ausgelöst…")
+            if not AHT.Production:StartCurrentPurchase() then
+                Render()
+                info:SetText(ProductionOrderText(dialog.order, suggestion) .. "\n\nFehler: Kauf konnte nicht ausgelöst werden. Bitte den Plan erneut prüfen.")
+            end
+            return
+        end
         if AHT.Buyer and AHT.Buyer.pending and AHT.Buyer.pending.state == "awaiting_user_confirmation" then
             action:Disable()
             action:SetText("Kauf läuft…")
