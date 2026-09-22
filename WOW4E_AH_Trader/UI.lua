@@ -809,6 +809,9 @@ function AHT.UI:RenderAHRecipePanel()
             entry.quantityPerCraft or 1, entry.bags or 0, bankText, estimate
         ))
         row.listings:SetText(AHRecipeListingText(entry))
+        if entry.error then
+            row.details:SetText(row.details:GetText() .. "\nFehler: " .. tostring(entry.error))
+        end
         if not AHT.AHOpen then
             row.buy:SetText("AH geschlossen")
             row.buy:Disable()
@@ -821,6 +824,9 @@ function AHT.UI:RenderAHRecipePanel()
         elseif entry.buyState == "checking" then
             row.buy:SetText("Preisprüfung …")
             row.buy:Disable()
+        elseif entry.buyState == "error" then
+            row.buy:SetText("Erneut prüfen")
+            row.buy:Enable()
         elseif entry.buyState == "buying" or entry.buyState == "submitted" then
             row.buy:SetText("Kauf läuft …")
             row.buy:Disable()
@@ -966,14 +972,15 @@ function AHT.UI:BuyAHRecipeMaterial(entry)
             entry.buyState = "done"
             entry.purchasedQuantity = (entry.purchasedQuantity or 0) + (tonumber(data and data.purchasedQuantity) or tonumber(plan.plannedQuantity) or 0)
         elseif state == "error" then
-            entry.buyState = nil
+            entry.buyState = "error"
             entry.error = tostring(data or "Kauf fehlgeschlagen")
         end
         self:RecalculateAHRecipeEntries()
         self:RenderAHRecipePanel()
     end)
     if not started then
-        entry.buyState = nil
+        entry.buyState = "error"
+        entry.error = "Kaufprüfung konnte nicht gestartet werden."
         self:RenderAHRecipePanel()
     end
     return started

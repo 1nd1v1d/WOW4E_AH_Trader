@@ -81,11 +81,12 @@ function AHT.Buyer:Confirm(plan, callback)
         startedAt = GetTime and GetTime() or 0,
         callback = callback,
     }
-    AHT.AH:Search(plan.target, function(results, meta)
+    local queued = AHT.AH:Search(plan.target, function(results, meta)
         if not self.pending then return end
+        meta = meta or {}
         if meta.error then
-            AHT:Print("Kauf abgebrochen: " .. meta.error)
-            self:Finish("error", meta.error)
+            AHT:Print("Kauf abgebrochen: " .. tostring(meta.error))
+            self:Finish("error", tostring(meta.error))
             return
         end
 
@@ -107,6 +108,10 @@ function AHT.Buyer:Confirm(plan, callback)
         self.pending.startedAt = GetTime and GetTime() or self.pending.startedAt
         self:Notify("ready", refreshed)
     end)
+    if not queued then
+        self:Finish("error", "auction_house_search_start_failed")
+        return false
+    end
     return true
 end
 
