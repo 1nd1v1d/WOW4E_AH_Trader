@@ -637,9 +637,15 @@ function AHT.UI:CreateAHRecipePanel()
 
     panel.close = Button(panel, nil, CLOSE or "Close", 80, 24)
     panel.close:SetPoint("TOPRIGHT", -14, -12)
+    -- The movable title drag handle is created before this button and covers
+    -- the same title-bar area. Keep the close button explicitly above it so
+    -- the click reaches the button on Forever's frame-stack implementation.
+    panel.close:SetFrameLevel((panel:GetFrameLevel() or 0) + 10)
+    panel.close:EnableMouse(true)
     panel.close:SetScript("OnClick", function()
         self:HideAHRecipePanel()
         if self.ahRecipeTab then self.ahRecipeTab:Hide() end
+        self:Show()
     end)
 
     panel.summary = Label(panel, "", 720)
