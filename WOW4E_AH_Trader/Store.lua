@@ -3,12 +3,14 @@ local AHT = WOW4E_AHT
 AHT.Store = {}
 
 local DEFAULT_DB = {
-    schemaVersion = 2,
+    schemaVersion = 3,
     market = {},
     byItemID = {},
     history = {},
     dailyHistory = {},
     recipes = {},
+    recipeIndex = {},
+    professions = {},
     materials = {},
     inventory = {
         characters = {},
@@ -64,7 +66,7 @@ end
 function AHT.Store:Load()
     if type(WOW4E_AHT_DB) ~= "table" then WOW4E_AHT_DB = {} end
     local tableKeys = {
-        "market", "byItemID", "history", "dailyHistory", "recipes", "materials",
+        "market", "byItemID", "history", "dailyHistory", "recipes", "recipeIndex", "professions", "materials",
         "inventory", "production", "ui", "settings",
     }
     for _, key in ipairs(tableKeys) do
@@ -76,7 +78,7 @@ function AHT.Store:Load()
     if tonumber(WOW4E_AHT_DB.settings.historyLimit) == 20 then
         WOW4E_AHT_DB.settings.historyLimit = 100
     end
-    WOW4E_AHT_DB.schemaVersion = 2
+    WOW4E_AHT_DB.schemaVersion = 3
     AHT.DB = WOW4E_AHT_DB
     self:RebuildIndexes()
     return AHT.DB

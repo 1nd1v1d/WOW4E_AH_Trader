@@ -33,7 +33,7 @@ Die Listen verwenden einen dynamischen Zeilenpool. Dadurch bleiben auch mehr als
 
 `Strg+Linksklick` auf ein herstellbares Ergebnis öffnet im geöffneten Auktionshaus den Reiter `AHT Rezept`. Dort werden Ergebnis- und Material-Listings parallel geladen. Die Materialzeilen zeigen die Menge pro Herstellung, die Gesamtanforderung, Taschen-/Bankbestand, den Restbedarf und eine kaufbare Planung auf Basis der günstigsten aktuellen Listings. Die Schaltfläche `Kaufen` prüft die Listings unmittelbar vor dem Kauf erneut; die finale Commodity-Preisbestätigung bleibt sichtbar und benutzerbestätigt. Der Reiter kann über `AHT Rezept` neben dem `AH Trader`-Button erneut geöffnet werden.
 
-SavedVariables werden beim Addonstart defensiv validiert. Ein vorübergehend leerer `TRADE_SKILL_LIST_UPDATE`-Event darf den gespeicherten Rezeptkatalog nicht überschreiben; die alten Rezepte bleiben erhalten, bis der Berufskatalog vollständig gelesen werden konnte.
+SavedVariables werden beim Addonstart defensiv validiert. Der gespeicherte Berufskatalog, Rezeptindex und die Rezeptdaten werden sofort geladen. Ein vorübergehend leerer `TRADE_SKILL_LIST_UPDATE`-Event darf den gespeicherten Rezeptkatalog nicht überschreiben; Berufsevents führen ausschließlich einen Delta-Upsert für neue oder geänderte Rezept-IDs aus. Die alten Rezepte bleiben erhalten, bis ein gültiger Datensatz ergänzt oder aktualisiert wurde; Berufe müssen nach einem Neustart nicht erneut geöffnet werden.
 
 ## Lokale Prüfung
 

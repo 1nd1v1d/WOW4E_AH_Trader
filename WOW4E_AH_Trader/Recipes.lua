@@ -2,12 +2,156 @@ local AHT = WOW4E_AHT
 
 AHT.Recipes = { list = {}, refreshing = false }
 
+local function RecipeKey(recipeID)
+    recipeID = tonumber(recipeID)
+    return recipeID and tostring(recipeID) or nil
+end
+
+local function TextValue(...)
+    for index = 1, select("#", ...) do
+        local value = select(index, ...)
+        if type(value) == "string" and value ~= "" then return value end
+    end
+end
+
+local function PositiveNumber(value)
+    value = tonumber(value)
+    return value and value > 0 and value or nil
+end
+
+local function ProfessionKey(professionID, professionName)
+    professionID = PositiveNumber(professionID)
+    if professionID then return "id:" .. tostring(professionID) end
+    professionName = TextValue(professionName)
+    if professionName then
+        return "name:" .. string.lower((professionName:gsub("%s+", "_")))
+    end
+    return "unknown"
+end
+
+local function ReadProfessionInfo()
+    local professionID, professionName
+    local api = C_TradeSkillUI
+    if api and api.GetBaseProfessionInfo then
+        local ok, profession = pcall(api.GetBaseProfessionInfo)
+        if ok and type(profession) == "table" then
+            professionID = PositiveNumber(profession.professionID or profession.parentProfessionID)
+            professionName = TextValue(profession.professionName, profession.name)
+        end
+    end
+
+    -- Forever can expose an empty base-profession object while the classic
+    -- trade-skill line is already available. Use both API generations as a
+    -- fallback so stored recipes can be attributed to a profession.
+    if api and api.GetTradeSkillLine then
+        local ok, lineName, _, _, _, _, lineID = pcall(api.GetTradeSkillLine)
+        if ok then
+            professionName = professionName or TextValue(lineName)
+            professionID = professionID or PositiveNumber(lineID)
+        end
+    end
+    if type(GetTradeSkillLine) == "function" then
+        local ok, lineName, _, _, _, _, lineID = pcall(GetTradeSkillLine)
+        if ok then
+            professionName = professionName or TextValue(lineName)
+            professionID = professionID or PositiveNumber(lineID)
+        end
+    end
+    return professionID or 0, professionName or ""
+end
+
+local function RecipesEqual(left, right)
+    if not left or not right then return false end
+    if tostring(left.name or "") ~= tostring(right.name or "") then return false end
+    if tonumber(left.professionID) ~= tonumber(right.professionID) then return false end
+    if tostring(left.professionName or "") ~= tostring(right.professionName or "") then return false end
+    local leftOutput, rightOutput = left.output or {}, right.output or {}
+    for _, key in ipairs({ "itemID", "quantity", "name", "link" }) do
+        if tostring(leftOutput[key] or "") ~= tostring(rightOutput[key] or "") then return false end
+    end
+    local leftReagents, rightReagents = left.reagents or {}, right.reagents or {}
+    if #leftReagents ~= #rightReagents then return false end
+    for index, leftReagent in ipairs(leftReagents) do
+        local rightReagent = rightReagents[index] or {}
+        if tonumber(leftReagent.itemID) ~= tonumber(rightReagent.itemID) or
+                tonumber(leftReagent.quantity or 1) ~= tonumber(rightReagent.quantity or 1) or
+                tostring(leftReagent.name or "") ~= tostring(rightReagent.name or "") then
+            return false
+        end
+    end
+    return true
+end
+
+local function RememberProfession(professionID, professionName, recipeIDs)
+    if not AHT.DB then return false end
+    AHT.DB.professions = AHT.DB.professions or {}
+    local key = ProfessionKey(professionID, professionName)
+    local record = AHT.DB.professions[key]
+    local changed = false
+    if type(record) ~= "table" then
+        record = { recipeIDs = {} }
+        AHT.DB.professions[key] = record
+        changed = true
+    end
+    record.recipeIDs = record.recipeIDs or {}
+    local known = {}
+    for _, recipeID in ipairs(record.recipeIDs) do known[tostring(recipeID)] = true end
+    for _, recipeID in ipairs(recipeIDs or {}) do
+        local recipeKey = RecipeKey(recipeID)
+        if recipeKey and not known[recipeKey] then
+            table.insert(record.recipeIDs, tonumber(recipeID) or recipeID)
+            known[recipeKey] = true
+            changed = true
+        end
+    end
+    if record.professionID ~= professionID then record.professionID = professionID; changed = true end
+    if record.name ~= professionName and professionName ~= "" then record.name = professionName; changed = true end
+    local now = AHT:Now()
+    if not record.lastSeen or now - tonumber(record.lastSeen) > 60 then
+        record.lastSeen = now
+        changed = true
+    end
+    return changed
+end
+
 function AHT.Recipes:Load()
     self.list = {}
+    local seen = {}
     for _, recipe in ipairs(AHT.DB and AHT.DB.recipes or {}) do
-        if type(recipe) == "table" and recipe.recipeID and recipe.output and recipe.output.itemID then
+        local key = type(recipe) == "table" and RecipeKey(recipe.recipeID)
+        if key and recipe.output and recipe.output.itemID and not seen[key] then
+            recipe.recipeID = tonumber(recipe.recipeID) or recipe.recipeID
+            recipe.professionID = tonumber(recipe.professionID) or 0
+            recipe.professionName = recipe.professionName or ""
+            recipe.reagents = recipe.reagents or {}
             table.insert(self.list, recipe)
+            seen[key] = true
         end
+    end
+    table.sort(self.list, function(a, b) return tostring(a.name or "") < tostring(b.name or "") end)
+    if AHT.DB then
+        AHT.DB.recipes = self.list
+        AHT.DB.recipeIndex = {}
+        local professionBuckets = {}
+        for _, recipe in ipairs(self.list) do
+            local key = RecipeKey(recipe.recipeID)
+            if key then AHT.DB.recipeIndex[key] = true end
+            local professionKey = ProfessionKey(recipe.professionID, recipe.professionName)
+            local bucket = professionBuckets[professionKey]
+            if not bucket then
+                bucket = {
+                    professionID = recipe.professionID,
+                    professionName = recipe.professionName,
+                    recipeIDs = {},
+                }
+                professionBuckets[professionKey] = bucket
+            end
+            table.insert(bucket.recipeIDs, recipe.recipeID)
+        end
+        for _, bucket in pairs(professionBuckets) do
+            RememberProfession(bucket.professionID, bucket.professionName, bucket.recipeIDs)
+        end
+        if AHT.Store then AHT.Store:Save() end
     end
     return self.list
 end
@@ -96,21 +240,15 @@ function AHT.Recipes:Refresh()
     if self.refreshing or not C_TradeSkillUI then return end
     self.refreshing = true
     local newList = {}
-    local professionID, professionName
-    if C_TradeSkillUI.GetBaseProfessionInfo then
-        local okProfession, profession = pcall(C_TradeSkillUI.GetBaseProfessionInfo)
-        if okProfession and type(profession) == "table" then
-            professionID = profession.professionID or profession.parentProfessionID
-            professionName = profession.professionName or profession.name
-        end
-    end
+    local professionID, professionName = ReadProfessionInfo()
+    local refreshedIDs = {}
     for _, recipeID in ipairs(ReadRecipeIDs()) do
         local ok, info = pcall(C_TradeSkillUI.GetRecipeInfo, recipeID)
         if ok and type(info) == "table" and info.name and info.learned ~= false then
             local output = ReadOutput(recipeID)
             local reagents = ReadReagents(recipeID)
             if output and output.itemID and #reagents > 0 then
-                table.insert(newList, {
+                local recipe = {
                     recipeID = recipeID,
                     name = info.name,
                     output = output,
@@ -118,48 +256,50 @@ function AHT.Recipes:Refresh()
                     professionID = professionID,
                     professionName = professionName,
                     isTransmute = string.find(string.lower(info.name), "transmut") ~= nil,
-                })
+                }
+                table.insert(newList, recipe)
+                refreshedIDs[RecipeKey(recipeID)] = true
             end
         end
     end
-    -- The Forever client can emit a transient list-update event while the
-    -- profession data is still loading. Never replace a persisted catalog
-    -- with that empty intermediate result.
-    if #newList == 0 then
-        self.refreshing = false
-        return
-    end
-    -- Forever exposes recipes per opened profession window. Replace the
-    -- currently opened profession while retaining recipes learned from other
-    -- professions so the production planner can work across all crafts.
-    local merged, seen, refreshedIDs = {}, {}, {}
-    for _, recipe in ipairs(newList) do
-        if recipe.recipeID then refreshedIDs[recipe.recipeID] = true end
-    end
-    local activeProfessionID = tonumber(professionID)
-    local canIdentifyProfession = activeProfessionID and activeProfessionID > 0
+    -- This is deliberately an upsert/delta sync. A temporary empty or partial
+    -- trade-skill event must never delete the persisted catalog; recipes from
+    -- other professions remain available after a restart and new recipe IDs
+    -- are simply appended.
+    local merged, seen = {}, {}
     for _, recipe in ipairs(AHT.DB and AHT.DB.recipes or {}) do
-        local storedProfessionID = tonumber(recipe.professionID)
-        -- Forever can currently report professionID=0. Never interpret that
-        -- as "all stored professions" or opening one profession would erase
-        -- every other persisted recipe catalog.
-        local sameProfession = canIdentifyProfession and storedProfessionID and
-            storedProfessionID > 0 and storedProfessionID == activeProfessionID
-        if not sameProfession and recipe.recipeID and not refreshedIDs[recipe.recipeID] and not seen[recipe.recipeID] then
-            seen[recipe.recipeID] = true
+        local key = type(recipe) == "table" and RecipeKey(recipe.recipeID)
+        if key and not refreshedIDs[key] and not seen[key] then
+            seen[key] = true
             table.insert(merged, recipe)
         end
     end
     for _, recipe in ipairs(newList) do
-        if recipe.recipeID and not seen[recipe.recipeID] then
-            seen[recipe.recipeID] = true
+        local key = RecipeKey(recipe.recipeID)
+        if key and not seen[key] then
+            seen[key] = true
             table.insert(merged, recipe)
+        else
+            for index, existing in ipairs(merged) do
+                if RecipeKey(existing.recipeID) == key and not RecipesEqual(existing, recipe) then
+                    merged[index] = recipe
+                    break
+                end
+            end
         end
     end
     table.sort(merged, function(a, b) return tostring(a.name or "") < tostring(b.name or "") end)
     self.list = merged
     if AHT.DB then
         AHT.DB.recipes = merged
+        AHT.DB.recipeIndex = AHT.DB.recipeIndex or {}
+        local newRecipeIDs = {}
+        for _, recipe in ipairs(merged) do
+            local key = RecipeKey(recipe.recipeID)
+            if key then AHT.DB.recipeIndex[key] = true end
+        end
+        for _, recipe in ipairs(newList) do table.insert(newRecipeIDs, recipe.recipeID) end
+        RememberProfession(professionID, professionName, newRecipeIDs)
         if AHT.Store then AHT.Store:Save() end
     end
     if AHT.Inventory and AHT.Inventory.bankOpen then AHT.Inventory:RefreshKnownItems() end
