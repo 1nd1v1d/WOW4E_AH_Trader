@@ -6,7 +6,7 @@
 
 Ein eigenständiger Auction-House-, Rezept- und Margenanalysator für **World of Warcraft: Forever**. Das Addon ist aus dem ursprünglichen `TWOW_AH_Trader`-Projekt abgeleitet, verwendet aber eine getrennte moderne API-Schicht für die Forever-Beta.
 
-> Status: Beta-Port für Interface `16001` / Version `0.7.1-beta`. Rezept-, Commodity-Kauf- und Post-Events müssen weiterhin im echten Forever-Client verifiziert werden.
+> Status: Beta-Port für Interface `16001` / Version `0.8.0-beta`. Rezept-, Commodity-Kauf- und Post-Events müssen weiterhin im echten Forever-Client verifiziert werden.
 
 ## Funktionen
 
@@ -31,13 +31,18 @@ Ein eigenständiger Auction-House-, Rezept- und Margenanalysator für **World of
 - Runenstoff-/Ruf-Funktion für Hauptstadtfraktionen bis Ehrfürchtig
 - Transmutationsanalyse
 - Runtime-Diagnose über `/aht debug`
-- UI-Release mit fokussierter Hauptnavigation, globaler Suche, Profitfilter und gespeicherter Fenster-/Sortierposition
+- vier Hauptansichten `Herstellen`, `Markt`, `Chancen` und `Aufträge`, plus Berufsauswahl und Transmute-Filter
+- Marktansicht über alle erfassten AH-Items, mit Filtern für beobachtete Items und Taschen-/Bankbestand
+- Scan-Auswahl für bekannte Items, den vollständigen AH-Markt oder ein ausgewähltes Item; Fortschritt und Teilscans werden angezeigt
+- klickbare Spaltenüberschriften und Detailbereich für Preisverlauf, Bestand, Zutaten und Herstellvorschläge
+- UI mit globaler Suche, Profitfilter und gespeicherter Fenster-/Sortierposition
 - dynamische Tabellenzeilen ohne künstliche 24-Zeilen-Grenze
 - persistenter SavedVariables-Schutz gegen temporär leere Berufsdaten beim Clientstart sowie reparierte Markt-Indizes nach einem Neustart
 - persistenter Berufskatalog mit Rezeptindex: gespeicherte Rezepte werden direkt nach dem Neustart geladen; Berufsevents führen nur einen Delta-Upsert für neue oder geänderte Rezepte aus
 - verschiebbare Dialoge ohne Überlagerung von Rezeptaktions- und Postplanfenster
 - vollständig deckender Hintergrund für Hauptfenster und Dialoge
 - vollständig schwarzer, undurchsichtiger Hintergrund für alle AHT-Fenster; der Rezept-/Materialplan ist ein eigenständiges, verschiebbares Fenster
+- fehlende SavedVariables werden nicht mehr still in eine leere Datenbank umgewandelt; AHT zeigt eine Wiederherstellungs-/Erstinstallationsauswahl
 
 ## Installation
 
@@ -68,7 +73,9 @@ Danach im Client `/reload` ausführen oder den Client neu starten.
 | `/aht debug` | Client- und API-Diagnose ausgeben |
 | `/aht reset` | gespeicherte Marktdaten löschen |
 
-Beim Öffnen des Auktionshauses erscheint ein `AH Trader`-Button direkt unterhalb der AH-Titelleiste. Die Hauptnavigation fokussiert `Herstellen`, `Markt`, `Aufträge` und `Chancen`; `Ruf` und `Diagnose` liegen unter `Mehr`, damit der Arbeitsbereich nicht mit seltenen Funktionen überladen wird. Die Suche filtert die sichtbare Liste nach Name, Item-ID und Beruf; `Nur profitabel` grenzt zusätzlich auf positive Chancen ein. Jede sichtbare Tabellenüberschrift ist anklickbar und sortiert ihre Spalte. Fensterposition, Größe, Ansicht und Sortierung werden gespeichert. Die Tabellenzeilen wachsen dynamisch mit der Ergebnisliste.
+Beim Öffnen des Auktionshauses erscheint ein `AH Trader`-Button direkt unterhalb der AH-Titelleiste. Die Hauptnavigation fokussiert `Herstellen`, `Markt`, `Aufträge` und `Chancen`; `Ruf` und `Diagnose` liegen unter `Mehr`. Die Berufsauswahl und der Transmute-Filter liegen in `Herstellen`. In `Markt` wechselt der Filter zwischen allen erfassten, beobachteten und in Taschen/Bank vorhandenen Items. Die Suche filtert nach Name, Item-ID und Beruf; `Nur profitabel` grenzt die passenden Ansichten auf positive Ergebnisse ein. Jede sichtbare Tabellenüberschrift ist anklickbar und sortiert ihre Spalte. Ein einfacher Klick wählt eine Zeile und zeigt zusätzliche Angaben im Detailbereich; `Im AH suchen` und `Kaufplan`/Aktionen sind dort sichtbar. Fensterposition, Größe, Ansicht, Filter und Sortierung werden gespeichert.
+
+Die Scan-Auswahl ist unabhängig von der Ansicht: `Bekannte Items` aktualisiert Rezept-, Material-, Inventar- und bereits erfasste Markteinträge; `Ganzer AH-Markt` übernimmt die Browse-Items; `Ausgewähltes Item` aktualisiert nur das markierte Ergebnis. Der Status zeigt erfasste und verworfene Einträge, Seitenzahl sowie Alter des letzten Scans. Nach 100 Browse-Seiten wird ein Lauf als teilweise abgeschlossen markiert. `Abbrechen` erhält bereits erfasste Preise.
 
 Bei herstellbaren Ergebnissen öffnet `Strg+Linksklick` den Reiter `AHT Rezept` direkt im geöffneten Auktionshaus. Er zeigt die aktuellen Listings des Ergebnisses und jeder benötigten Zutat, die benötigte Menge pro Herstellvorgang und für die gewählte Gesamtmenge, Taschen-/Bankbestand, den voraussichtlichen Einkaufspreis sowie eine eigene `Kaufen`-Schaltfläche je Material. Die Kaufprüfung läuft über dieselbe Live-Preis- und Mengenbestätigung wie AutoBuy; vor dem finalen Commodity-Kauf bleibt die sichtbare Blizzard-Bestätigung erforderlich. Über `Herstellvorgänge` kann die Einkaufsliste ohne erneuten Rezeptscan neu berechnet werden.
 
@@ -79,6 +86,10 @@ Die Ansicht `Chancen` enthält zwei klar getrennte Zeilentypen: `Kaufen` für ak
 ## Herstellungsaufträge und AutoBuy
 
 `Trank` steht im Addon für jedes herstellbare Ergebnis eines erkannten Berufsrezepts. Der Forever-Port speichert Rezepte berufsübergreifend: Jeder Beruf muss mindestens einmal geöffnet werden, damit seine gelernten Rezepte eingelesen werden.
+
+Der Rezeptkatalog und seine Indizes werden direkt aus SavedVariables geladen. Geöffnete Berufe ergänzen oder aktualisieren den Bestand per Delta-Abgleich; ein vorübergehend leerer Berufsdaten-Event löscht keine bekannten Rezepte.
+
+Fehlt die SavedVariables-Tabelle, erzeugt AHT sie nicht automatisch. Wer bereits Daten hatte, soll im Wiederherstellungsfenster `Erneut laden` wählen und **keine neue Datenbank anlegen**. Eine `.bak` darf nur bei vollständig beendetem WoW-Client wiederhergestellt werden; vorher beide Dateien separat sichern. `Store:Save()` aktualisiert den kanonischen In-Memory-Stand. Die Datei-Serialisierung erledigt WoW bei `/reload` beziehungsweise regulärem Logout; ein Save-Aufruf allein beweist also noch keine erfolgreiche Speicherung auf Datenträger.
 
 Die Rezeptliste zeigt eine konservative Mengenempfehlung sowie die erwartete Marge. Ein Klick auf ein Rezept öffnet den Herstellungs- und Einkaufsplan. Dort wird die gewünschte Anzahl an Herstellvorgängen eingegeben. Das Addon:
 

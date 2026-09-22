@@ -124,6 +124,22 @@ function AHT.Inventory:GetKnownItemIDs()
     return ids
 end
 
+function AHT.Inventory:GetAvailableItemSet()
+    local available = {}
+    local function Add(itemID)
+        itemID = tonumber(itemID)
+        if itemID then available[tostring(itemID)] = true end
+    end
+    ScanVisibleContainers(self.bankOpen, Add)
+    if not self.bankOpen then
+        local store = self:GetCharacterStore()
+        for itemID, count in pairs(store and store.bank or {}) do
+            if (tonumber(count) or 0) > 0 then Add(itemID) end
+        end
+    end
+    return available
+end
+
 function AHT.Inventory:GetScanTargets()
     local targets, seen = {}, {}
     local function Add(itemID, name, itemKey, kind)

@@ -39,6 +39,9 @@ $requiredSnippets = @(
     "C_AuctionHouse.StartCommoditiesPurchase",
     "C_AuctionHouse.ConfirmCommoditiesPurchase",
     "function AHT.Store:EnsureLoaded",
+    "function AHT.Store:CreateNew",
+    "canonicalDB = nil",
+    "WOW4E_AHT_DB = self.canonicalDB",
     "function AHT.Buyer:StartPendingPurchase",
     'self.pending.state = "ready_to_buy"',
     'pending.state = "awaiting_completion"',
@@ -61,11 +64,24 @@ $requiredSnippets = @(
     "self.moreMenu",
     "AHT.DB.ui.viewMode",
     'if type(WOW4E_AHT_DB) ~= "table"',
+    "function AHT.UI:ShowDatabaseRecovery",
+    "SetColorTexture(0, 0, 0, 1)",
+    "function AHT.UI:RefreshDetail",
+    "function AHT.UI:CycleProfessionFilter",
+    "function AHT.UI:CycleOpportunityDirection",
+    "function AHT.UI:CycleOpportunityMinimum",
+    'self.viewMode == "opportunities" and result.kind == "opportunity"',
+    "result.side ~= self.opportunityDirection",
+    "result.discount) or 0) < minimum",
+    "function AHT.Scanner:BeginScanRun",
+    "function AHT.Scanner:FinishScanRun",
+    "GetAvailableItemSet",
+    "marketFilter",
     "-- This is deliberately an upsert/delta sync.",
     "RememberProfession",
     "recipeIndex",
     "self:Save()",
-    "waiting_for_saved_variables",
+    "database_missing",
     "result.currentSalePrice = result.salePrice",
     "result.expectedSalePrice = result.currentSalePrice or result.marketSalePrice",
     'label = "Marktwert"',
@@ -76,6 +92,10 @@ foreach ($snippet in $requiredSnippets) {
     if (-not $source.Contains($snippet)) {
         $errors.Add("Erforderlicher Vertrag fehlt: $snippet")
     }
+}
+
+if ($source.Contains("WOW4E_AHT_DB = AHT.DB")) {
+    $errors.Add("Store darf die kanonische SavedVariables-Referenz nicht neu zuweisen")
 }
 
 if ($source.Contains("AHT.Capabilities = c")) {

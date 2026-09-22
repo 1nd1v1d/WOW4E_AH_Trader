@@ -1,9 +1,9 @@
 local AHT = WOW4E_AHT
 
-AHT.Store = {}
+AHT.Store = { canonicalDB = nil }
 
 local DEFAULT_DB = {
-    schemaVersion = 3,
+    schemaVersion = 4,
     market = {},
     byItemID = {},
     history = {},
@@ -20,6 +20,13 @@ local DEFAULT_DB = {
         orders = {},
         purchases = {},
     },
+    scan = {
+        status = "never",
+        mode = "",
+        itemCount = 0,
+        rejectedCount = 0,
+        pageCount = 0,
+    },
     ui = {
         x = 0,
         y = 0,
@@ -28,6 +35,10 @@ local DEFAULT_DB = {
         viewMode = "recipes",
         sortColumn = "profit",
         sortAscending = false,
+        marketFilter = "all",
+        professionFilter = "all",
+        opportunityDirection = "all",
+        minimumOpportunityPercent = 0,
     },
     settings = {
         minMarginPercent = 10,
@@ -64,10 +75,14 @@ local function CopyDefaults(target, defaults)
 end
 
 function AHT.Store:Load()
-    if type(WOW4E_AHT_DB) ~= "table" then WOW4E_AHT_DB = {} end
+    if self.canonicalDB then WOW4E_AHT_DB = self.canonicalDB end
+    if type(WOW4E_AHT_DB) ~= "table" then
+        return nil, "saved_variables_missing"
+    end
+    if not self.canonicalDB then self.canonicalDB = WOW4E_AHT_DB end
     local tableKeys = {
         "market", "byItemID", "history", "dailyHistory", "recipes", "recipeIndex", "professions", "materials",
-        "inventory", "production", "ui", "settings",
+        "inventory", "production", "scan", "ui", "settings",
     }
     for _, key in ipairs(tableKeys) do
         if type(WOW4E_AHT_DB[key]) ~= "table" then WOW4E_AHT_DB[key] = {} end
@@ -78,36 +93,62 @@ function AHT.Store:Load()
     if tonumber(WOW4E_AHT_DB.settings.historyLimit) == 20 then
         WOW4E_AHT_DB.settings.historyLimit = 100
     end
-    WOW4E_AHT_DB.schemaVersion = 3
-    AHT.DB = WOW4E_AHT_DB
+    local previousScan = WOW4E_AHT_DB.scan
+    if previousScan.status == "running" then
+        previousScan.status = (tonumber(previousScan.itemCount) or 0) > 0 and "partial" or "aborted"
+        previousScan.finishedAt = AHT:Now() or time()
+        previousScan.reason = "client_restarted_during_scan"
+    end
+    local filters = { all = true, watched = true, inventory = true }
+    if not filters[WOW4E_AHT_DB.ui.marketFilter] then WOW4E_AHT_DB.ui.marketFilter = "all" end
+    if type(WOW4E_AHT_DB.ui.professionFilter) ~= "string" then WOW4E_AHT_DB.ui.professionFilter = "all" end
+    if WOW4E_AHT_DB.ui.opportunityDirection ~= "buy" and WOW4E_AHT_DB.ui.opportunityDirection ~= "sell" then
+        WOW4E_AHT_DB.ui.opportunityDirection = "all"
+    end
+    local minimum = tonumber(WOW4E_AHT_DB.ui.minimumOpportunityPercent) or 0
+    WOW4E_AHT_DB.ui.minimumOpportunityPercent = math.max(0, math.min(100, minimum))
+    WOW4E_AHT_DB.schemaVersion = 4
+    AHT.DB = self.canonicalDB
     self:RebuildIndexes()
     return AHT.DB
 end
 
-function AHT.Store:Save()
-    if AHT.DB then
-        self:RebuildIndexes()
-        WOW4E_AHT_DB = AHT.DB
+function AHT.Store:CreateNew()
+    if self.canonicalDB or type(AHT.DB) == "table" or type(WOW4E_AHT_DB) == "table" then
+        return false, "saved_variables_already_exist"
     end
+    WOW4E_AHT_DB = {}
+    return self:Load() ~= nil
+end
+
+function AHT.Store:Save()
+    if not self:EnsureLoaded() then return false, "database_not_loaded" end
+    if AHT.DB ~= self.canonicalDB or WOW4E_AHT_DB ~= self.canonicalDB then return false, "database_reference_mismatch" end
+    -- WoW serializes SavedVariables on reload/logout. Keep the table loaded at
+    -- login canonical so an accidental empty replacement cannot be serialized.
+    return true
 end
 
 function AHT.Store:EnsureLoaded()
     local requiredTables = {
         "market", "byItemID", "history", "dailyHistory", "recipes", "recipeIndex", "professions",
-        "materials", "inventory", "production", "ui", "settings",
+        "materials", "inventory", "production", "scan", "ui", "settings",
     }
-    local needsLoad = type(AHT.DB) ~= "table"
-    if not needsLoad then
-        for _, key in ipairs(requiredTables) do
-            if type(AHT.DB[key]) ~= "table" then
-                needsLoad = true
-                break
-            end
-        end
+    if self.canonicalDB then
+        -- Keep the table loaded at login as the single source of truth. This
+        -- also repairs an accidental nil/empty global before WoW serializes it.
+        WOW4E_AHT_DB = self.canonicalDB
+        AHT.DB = self.canonicalDB
+    elseif type(WOW4E_AHT_DB) == "table" then
+        if not self:Load() then return false end
+    else
+        return false
     end
-    if needsLoad then
-        if type(WOW4E_AHT_DB) ~= "table" then return false end
-        self:Load()
+    for _, key in ipairs(requiredTables) do
+        if type(AHT.DB[key]) ~= "table" then
+            if not self:Load() then return false end
+            break
+        end
     end
     return type(AHT.DB) == "table"
 end
@@ -115,28 +156,32 @@ end
 function AHT.Store:RebuildIndexes()
     if not AHT.DB then return end
     AHT.DB.market = AHT.DB.market or {}
-    AHT.DB.byItemID = AHT.DB.byItemID or {}
-    -- Older beta snapshots could contain valid market records while the
-    -- byItemID lookup was empty or pointed to a removed key. Rebuild the
-    -- lookup on every load/save so prices remain visible after a restart.
+    local byItemID = {}
+    local indexedAt = {}
+    -- Rebuild from the canonical market table. This removes stale pointers and
+    -- makes repeated migrations deterministic without deleting market data.
     for key, record in pairs(AHT.DB.market) do
         if type(record) == "table" and record.itemID then
-            local itemID = tostring(record.itemID)
-            local indexedKey = AHT.DB.byItemID[itemID]
-            local indexedRecord = indexedKey and AHT.DB.market[indexedKey]
-            if not indexedRecord or tonumber(indexedRecord.itemID) ~= tonumber(record.itemID) then
-                AHT.DB.byItemID[itemID] = key
+            local itemID = tostring(tonumber(record.itemID) or record.itemID)
+            local updatedAt = tonumber(record.updatedAt) or 0
+            if not byItemID[itemID] or updatedAt > (indexedAt[itemID] or 0)
+                    or (updatedAt == (indexedAt[itemID] or 0) and tostring(key) > tostring(byItemID[itemID])) then
+                byItemID[itemID] = key
+                indexedAt[itemID] = updatedAt
             end
         end
     end
+    AHT.DB.byItemID = byItemID
 end
 
 function AHT.Store:ResetMarket()
+    if not self:EnsureLoaded() then return false end
     AHT.DB.market = {}
     AHT.DB.byItemID = {}
     AHT.DB.history = {}
     AHT.DB.dailyHistory = {}
     self:Save()
+    return true
 end
 
 function AHT.Store:MarketKey(itemID, itemKey)

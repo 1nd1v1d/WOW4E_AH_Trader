@@ -7,21 +7,31 @@ AHT.UI = {
     lastMessage = "",
     searchQuery = "",
     profitOnly = false,
+    marketFilter = "all",
+    professionFilter = nil,
+    opportunityDirection = "all",
+    minimumOpportunityPercent = 0,
+    showTransmutes = false,
+    selectedResult = nil,
 }
 
 local function MakeBackdrop(frame)
     if frame.SetBackdrop then
         frame:SetBackdrop({
-            bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
             edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
-            tile = true, tileSize = 32, edgeSize = 12,
+            edgeSize = 12,
             insets = { left = 3, right = 3, top = 3, bottom = 3 },
         })
     end
-    -- Every addon window is intentionally fully opaque black. The Blizzard
-    -- dialog texture is still used for its border, but it must not reveal the
-    -- game world or the AH behind the window.
-    if frame.SetBackdropColor then frame:SetBackdropColor(0, 0, 0, 1) end
+    -- Use our own solid layer; Blizzard dialog background textures can carry
+    -- alpha and BackdropTemplate is not available on every Forever frame.
+    if not frame.ahtOpaqueBackground then
+        frame.ahtOpaqueBackground = frame:CreateTexture(nil, "BACKGROUND", nil, -8)
+    end
+    frame.ahtOpaqueBackground:ClearAllPoints()
+    frame.ahtOpaqueBackground:SetAllPoints(frame)
+    frame.ahtOpaqueBackground:SetColorTexture(0, 0, 0, 1)
+    if frame.SetAlpha then frame:SetAlpha(1) end
     if frame.SetBackdropBorderColor then frame:SetBackdropBorderColor(0.75, 0.48, 0.12, 0.95) end
 end
 
@@ -65,34 +75,57 @@ local function DisableInput(box)
     elseif box.Disable then box:Disable() end
 end
 
+local function ResultKey(result)
+    if not result or result.kind == "info" then return nil end
+    if result.recipeID then return "recipe:" .. tostring(result.recipeID) end
+    if result.order then
+        return "order:" .. tostring(result.order.createdAt or result.order.name or result.name)
+    end
+    local item = result.output or result
+    if not item.itemID then return nil end
+    local itemKey = item.itemKey and AHT:ItemKeyString(item.itemKey) or ""
+    return table.concat({ tostring(result.kind or "item"), tostring(item.itemID), tostring(result.side or ""), itemKey }, ":")
+end
+
+local function PriceText(value)
+    return value and AHT:FormatMoneyPlain(value) or AHT.L.noData
+end
+
+local function PercentText(value)
+    return value ~= nil and string.format("%+.1f%%", value) or "-"
+end
+
+local function ScanAgeText(timestamp)
+    local age = timestamp and math.max(0, (AHT:Now() or time()) - timestamp)
+    if not age then return "noch nie" end
+    if age < 60 then return "gerade eben" end
+    if age < 3600 then return string.format("vor %d Min.", math.floor(age / 60)) end
+    if age < 86400 then return string.format("vor %d Std.", math.floor(age / 3600)) end
+    return string.format("vor %d Tg.", math.floor(age / 86400))
+end
+
 local RECIPE_COLUMNS = {
-    { key = "name", label = "Rezept / Ergebnis", width = 215 },
-    { key = "ingredientCost", label = "Kosten", width = 80 },
-    { key = "salePrice", label = "Aktuell", width = 80 },
-    { key = "marketSalePrice", label = "Marktwert", width = 90 },
-    { key = "profit", label = "Gewinn", width = 80 },
-    { key = "margin", label = "Marge", width = 70 },
-    { key = "suggestedCrafts", label = "Empf.", width = 85 },
+    { key = "name", label = "Rezept / Ergebnis", width = 230 },
+    { key = "ingredientCost", label = "Kosten", width = 105 },
+    { key = "salePrice", label = "Aktuell", width = 105 },
+    { key = "profit", label = "Gewinn", width = 145 },
+    { key = "margin", label = "Marge", width = 115 },
 }
 
 local MATERIAL_COLUMNS = {
-    { key = "name", label = "Material", width = 200 },
-    { key = "itemID", label = "Item-ID", width = 70 },
-    { key = "currentPrice", label = "Aktuell", width = 90 },
-    { key = "marketValue", label = "Marktwert", width = 95 },
-    { key = "averagePrice", label = "Ø AH-Preis", width = 100 },
-    { key = "priceChangePercent", label = "Scan-Trend", width = 80 },
-    { key = "updatedAt", label = "Letzter Scan", width = 75 },
+    { key = "name", label = "Item", width = 220 },
+    { key = "currentPrice", label = "Aktuell", width = 105 },
+    { key = "marketValue", label = "Marktwert", width = 115 },
+    { key = "marketTrendPercent", label = "Trend", width = 90 },
+    { key = "updatedAt", label = "Gescannt", width = 170 },
 }
 
 local OPPORTUNITY_COLUMNS = {
-    { key = "name", label = "Chance / Item", width = 200 },
-    { key = "currentPrice", label = "Preis", width = 85 },
-    { key = "marketValue", label = "Marktwert", width = 95 },
-    { key = "discount", label = "Vorteil", width = 80 },
-    { key = "profit", label = "Netto", width = 85 },
-    { key = "roi", label = "ROI", width = 70 },
-    { key = "quantity", label = "Menge", width = 85 },
+    { key = "name", label = "Chance / Item", width = 220 },
+    { key = "currentPrice", label = "Aktuell", width = 105 },
+    { key = "marketValue", label = "Marktwert", width = 105 },
+    { key = "discount", label = "Vorteil", width = 110 },
+    { key = "profit", label = "Netto", width = 160 },
 }
 
 local ORDER_COLUMNS = {
@@ -144,7 +177,7 @@ local VIEW_INFO = {
     },
     materials = {
         title = "Markt",
-        help = "Überwachte Materialien mit aktuellem Preis, altersgewichteter Historie und robustem Marktwert.",
+        help = "Alle erfassten AH-Items. Aktuell = letzter Scan; Marktwert = robuste historische Orientierung.",
     },
     orders = {
         title = "Aufträge",
@@ -183,16 +216,19 @@ function AHT.UI:SaveLayout()
     AHT.DB.ui.viewMode = self.viewMode
     AHT.DB.ui.sortColumn = self.sortColumn
     AHT.DB.ui.sortAscending = self.sortAscending == true
+    AHT.DB.ui.marketFilter = self.marketFilter or "all"
+    AHT.DB.ui.professionFilter = self.professionFilter or "all"
+    AHT.DB.ui.opportunityDirection = self.opportunityDirection or "all"
+    AHT.DB.ui.minimumOpportunityPercent = self.minimumOpportunityPercent or 0
     if AHT.Store then AHT.Store:Save() end
 end
 
 function AHT.UI:UpdateNavigation()
     local primary = {
         recipes = self.recipeButton,
-        transmute = self.transmuteButton,
         materials = self.matsButton,
-        orders = self.ordersButton,
         opportunities = self.opportunityButton,
+        orders = self.ordersButton,
     }
     for viewMode, button in pairs(primary) do
         if button and button.GetFontString then
@@ -217,6 +253,8 @@ end
 
 function AHT.UI:RefreshControls()
     local materials = self.viewMode == "materials"
+    local recipes = self.viewMode == "recipes" or self.viewMode == "transmute"
+    local opportunities = self.viewMode == "opportunities"
     local searchable = self.viewMode == "recipes"
         or self.viewMode == "transmute"
         or self.viewMode == "materials"
@@ -229,7 +267,30 @@ function AHT.UI:RefreshControls()
         if searchable then self.searchInput:Show() else self.searchInput:Hide() end
     end
     if self.filterButton then
-        if searchable then self.filterButton:Show() else self.filterButton:Hide() end
+        if searchable and self.viewMode ~= "orders" then self.filterButton:Show() else self.filterButton:Hide() end
+        if materials then
+            local labels = { all = "Alle Items", watched = "Beobachtet", inventory = "Tasche/Bank" }
+            self.filterButton:SetText(labels[self.marketFilter] or labels.all)
+        else
+            self.filterButton:SetText(self.profitOnly and "Alle" or "Nur profitabel")
+        end
+    end
+    if self.transmuteButton then
+        if recipes then self.transmuteButton:Show() else self.transmuteButton:Hide() end
+        self.transmuteButton:SetText(self.showTransmutes and "Alle Berufe" or "Transmute")
+    end
+    if self.professionButton then
+        if recipes then self.professionButton:Show() else self.professionButton:Hide() end
+        self.professionButton:SetText(self.professionFilter or "Alle Berufe")
+    end
+    if self.opportunityDirectionButton then
+        if opportunities then self.opportunityDirectionButton:Show() else self.opportunityDirectionButton:Hide() end
+        local labels = { all = "Alle Chancen", buy = "Nur Kauf", sell = "Nur Verkauf" }
+        self.opportunityDirectionButton:SetText(labels[self.opportunityDirection] or labels.all)
+    end
+    if self.opportunityMinimumButton then
+        if opportunities then self.opportunityMinimumButton:Show() else self.opportunityMinimumButton:Hide() end
+        self.opportunityMinimumButton:SetText(string.format("Vorteil ≥ %d%%", self.minimumOpportunityPercent or 0))
     end
     if self.materialLabel then
         if materials then self.materialLabel:Show() else self.materialLabel:Hide() end
@@ -240,16 +301,134 @@ function AHT.UI:RefreshControls()
     if self.materialAdd then
         if materials then self.materialAdd:Show() else self.materialAdd:Hide() end
     end
-    if self.filterButton then self.filterButton:SetText(self.profitOnly and "Alle" or "Nur profitabel") end
+end
+
+function AHT.UI:CycleProfessionFilter()
+    local names, seen = {}, {}
+    for _, recipe in ipairs(AHT.Recipes and AHT.Recipes:GetList() or {}) do
+        local name = recipe.professionName
+        if name and name ~= "" and not seen[name] then
+            seen[name] = true
+            table.insert(names, name)
+        end
+    end
+    table.sort(names)
+    local current = self.professionFilter
+    local currentIndex = 0
+    for index, name in ipairs(names) do
+        if name == current then currentIndex = index break end
+    end
+    if #names == 0 or currentIndex >= #names then
+        self.professionFilter = nil
+    else
+        self.professionFilter = names[currentIndex + 1]
+    end
+    if AHT.DB and AHT.DB.ui then AHT.DB.ui.professionFilter = self.professionFilter or "all" end
+    self:RefreshControls()
+    self:Refresh(true)
+end
+
+function AHT.UI:CycleOpportunityDirection()
+    local nextDirection = { all = "buy", buy = "sell", sell = "all" }
+    self.opportunityDirection = nextDirection[self.opportunityDirection] or "all"
+    if AHT.DB and AHT.DB.ui then AHT.DB.ui.opportunityDirection = self.opportunityDirection end
+    self:RefreshControls()
+    self:Refresh(true)
+end
+
+function AHT.UI:CycleOpportunityMinimum()
+    local steps = { 0, 10, 20, 30 }
+    local nextValue = steps[1]
+    for index, value in ipairs(steps) do
+        if value == self.minimumOpportunityPercent then nextValue = steps[index + 1] or steps[1] break end
+    end
+    self.minimumOpportunityPercent = nextValue
+    if AHT.DB and AHT.DB.ui then AHT.DB.ui.minimumOpportunityPercent = nextValue end
+    self:RefreshControls()
+    self:Refresh(true)
+end
+
+function AHT.UI:ShowDatabaseRecovery()
+    if not self.databaseRecovery then
+        local template = BackdropTemplateMixin and "BackdropTemplate" or nil
+        local dialog = CreateFrame("Frame", nil, UIParent, template)
+        dialog:SetSize(460, 220)
+        dialog:SetPoint("CENTER")
+        dialog:SetFrameStrata("DIALOG")
+        dialog:SetFrameLevel(240)
+        dialog:EnableMouse(true)
+        if dialog.SetClampedToScreen then dialog:SetClampedToScreen(true) end
+        MakeBackdrop(dialog)
+        MakeDialogMovable(dialog)
+
+        dialog.title = Label(dialog, "WoW4E AH Trader – Daten nicht geladen", 420)
+        dialog.title:SetPoint("TOPLEFT", 16, -16)
+        dialog.title:SetFontObject("GameFontHighlightLarge")
+        dialog.title:SetTextColor(1, 0.84, 0.35)
+        dialog.message = Label(dialog, "", 420)
+        dialog.message:SetPoint("TOPLEFT", 16, -56)
+        dialog.message:SetHeight(92)
+        dialog.message:SetJustifyV("TOP")
+        if dialog.message.SetWordWrap then dialog.message:SetWordWrap(true) end
+        dialog.message:SetTextColor(0.9, 0.86, 0.75)
+
+        dialog.retry = Button(dialog, nil, "Erneut laden", 118, 26)
+        dialog.retry:SetPoint("BOTTOMLEFT", 16, 14)
+        dialog.retry:SetScript("OnClick", function()
+            if AHT:Initialize() then
+                self:HideDatabaseRecovery()
+                self:Show()
+            else
+                self:ShowDatabaseRecovery()
+            end
+        end)
+        dialog.newDatabase = Button(dialog, nil, "Neue Datenbank", 132, 26)
+        dialog.newDatabase:SetPoint("LEFT", dialog.retry, "RIGHT", 8, 0)
+        dialog.newDatabase:SetScript("OnClick", function() AHT:InitializeNewDatabase() end)
+        self.databaseRecovery = dialog
+    end
+
+    local missing = type(WOW4E_AHT_DB) ~= "table"
+    local canCreate = missing and not (AHT.Store and AHT.Store.canonicalDB) and type(AHT.DB) ~= "table"
+    local message
+    if canCreate then
+        message = "Die SavedVariables-Datenbank ist nicht verfügbar. Wenn du bereits Daten hattest: Lege keine neue Datenbank an. Prüfe nach beendetem Spiel die Sicherung; beim nächsten Login kannst du erneut laden."
+    elseif missing then
+        message = "Die globale SavedVariables-Referenz fehlt, aber AHT hält die zuvor geladene Tabelle noch im Speicher. Lade erneut, damit diese Referenz wiederhergestellt wird."
+    else
+        message = "Die gespeicherten Daten konnten nicht geladen werden. Bitte zuerst erneut laden. Eine neue Datenbank wird nur angeboten, wenn keine SavedVariables-Tabelle vorhanden ist."
+    end
+    self.databaseRecovery.message:SetText(message)
+    if canCreate then self.databaseRecovery.newDatabase:Show() else self.databaseRecovery.newDatabase:Hide() end
+    self.databaseRecovery:Show()
+    if self.databaseRecovery.Raise then self.databaseRecovery:Raise() end
+end
+
+function AHT.UI:HideDatabaseRecovery()
+    if self.databaseRecovery then self.databaseRecovery:Hide() end
 end
 
 function AHT.UI:SetView(viewMode)
-    if not AHT.Initialized and AHT.Initialize then AHT:Initialize(true) end
+    if viewMode == "transmute" then
+        self.showTransmutes = true
+        viewMode = "recipes"
+    elseif viewMode == "recipes" then
+        self.showTransmutes = false
+    end
+    if not AHT.Initialized and AHT.Initialize then AHT:Initialize() end
+    if not AHT.Initialized then
+        self:ShowDatabaseRecovery()
+        return false
+    end
     self.viewMode = VIEW_INFO[viewMode] and viewMode or "recipes"
+    self.lastMessage = ""
+    self.selectedResult = nil
     if not self.frame then self:Create() end
     if self.moreMenu then self.moreMenu:Hide() end
+    if self.scanMenu then self.scanMenu:Hide() end
     self:RefreshControls()
     self:UpdateNavigation()
+    self:RefreshDetail()
     if AHT.DB and AHT.DB.ui then AHT.DB.ui.viewMode = self.viewMode end
     self:Refresh()
     self:SaveLayout()
@@ -264,6 +443,10 @@ function AHT.UI:Create()
     self.viewMode = VIEW_INFO[ui.viewMode] and ui.viewMode or self.viewMode
     self.sortColumn = ui.sortColumn
     self.sortAscending = ui.sortAscending ~= false
+    self.marketFilter = ui.marketFilter or self.marketFilter or "all"
+    self.professionFilter = ui.professionFilter and ui.professionFilter ~= "all" and ui.professionFilter or nil
+    self.opportunityDirection = ui.opportunityDirection or "all"
+    self.minimumOpportunityPercent = tonumber(ui.minimumOpportunityPercent) or 0
     self.frame:SetSize(tonumber(ui.width) or 780, tonumber(ui.height) or 600)
     self.frame:SetPoint("CENTER", UIParent, "CENTER", tonumber(ui.x) or 0, tonumber(ui.y) or 0)
     self.frame:SetFrameStrata("DIALOG")
@@ -297,6 +480,11 @@ function AHT.UI:Create()
     MakeBackdrop(self.frame)
     self.frame:Hide()
 
+    if ui.viewMode == "transmute" then
+        self.viewMode = "recipes"
+        self.showTransmutes = true
+    end
+
     self.title = Label(self.frame, "WoW4E AH Trader  |  Marktübersicht", 560)
     self.title:SetPoint("TOPLEFT", 18, -16)
     self.title:SetFontObject("GameFontHighlightLarge")
@@ -326,63 +514,81 @@ function AHT.UI:Create()
     self.viewHelp:SetPoint("TOPLEFT", 18, -151)
     self.viewHelp:SetTextColor(0.72, 0.68, 0.58)
 
-    self.scanButton = Button(self.frame, nil, "AH Scan", 100, 24)
-    self.scanButton:SetPoint("TOPLEFT", 18, -70)
+    self.recipeButton = Button(self.frame, nil, "Herstellen", 112, 24)
+    self.recipeButton:SetPoint("TOPLEFT", 18, -70)
+    self.recipeButton:SetScript("OnClick", function() self:SetView("recipes") end)
+
+    self.matsButton = Button(self.frame, nil, "Markt", 88, 24)
+    self.matsButton:SetPoint("LEFT", self.recipeButton, "RIGHT", 8, 0)
+    self.matsButton:SetScript("OnClick", function() self:SetView("materials") end)
+
+    self.opportunityButton = Button(self.frame, nil, "Chancen", 88, 24)
+    self.opportunityButton:SetPoint("LEFT", self.matsButton, "RIGHT", 8, 0)
+    self.opportunityButton:SetScript("OnClick", function() self:SetView("opportunities") end)
+
+    self.ordersButton = Button(self.frame, nil, "Aufträge", 92, 24)
+    self.ordersButton:SetPoint("LEFT", self.opportunityButton, "RIGHT", 8, 0)
+    self.ordersButton:SetScript("OnClick", function() self:SetView("orders") end)
+
+    self.moreButton = Button(self.frame, nil, "Mehr", 70, 24)
+    self.moreButton:SetPoint("LEFT", self.ordersButton, "RIGHT", 8, 0)
+
+    self.scanButton = Button(self.frame, nil, "Scannen ▾", 120, 24)
+    self.scanButton:SetPoint("TOPRIGHT", -18, -70)
     self.scanButton:SetScript("OnClick", function()
         if AHT.Scanner.running or AHT.Scanner.marketDiscovery then
             AHT.Scanner:Stop("user")
-        elseif self.viewMode == "opportunities" then
-            AHT.Scanner:StartMarketDiscovery()
+            if self.scanMenu then self.scanMenu:Hide() end
         else
-            AHT.Scanner:Start()
+            if self.scanMenu:IsShown() then self.scanMenu:Hide() else self.scanMenu:Show() end
         end
         self:RefreshStatus()
     end)
 
-    self.recipeButton = Button(self.frame, nil, "Herstellen", 100, 24)
-    self.recipeButton:SetPoint("LEFT", self.scanButton, "RIGHT", 8, 0)
-    self.recipeButton:SetScript("OnClick", function()
-        self:SetView("recipes")
-        if AHT.Recipes then AHT.Recipes:Refresh() end
+    self.scanMenu = CreateFrame("Frame", nil, self.frame, template)
+    self.scanMenu:SetSize(190, 112)
+    self.scanMenu:SetPoint("TOPRIGHT", self.scanButton, "BOTTOMRIGHT", 0, -4)
+    self.scanMenu:SetFrameStrata("TOOLTIP")
+    MakeBackdrop(self.scanMenu)
+    local function AddScanOption(label, y, callback)
+        local option = Button(self.scanMenu, nil, label, 164, 26)
+        option:SetPoint("TOPLEFT", 12, y)
+        option:SetScript("OnClick", function()
+            self.scanMenu:Hide()
+            callback()
+            self:RefreshStatus()
+        end)
+    end
+    AddScanOption("Bekannte Items", -9, function() AHT.Scanner:Start(nil, "known") end)
+    AddScanOption("Ganzer AH-Markt", -41, function() AHT.Scanner:StartMarketDiscovery() end)
+    AddScanOption("Ausgewähltes Item", -73, function()
+        local result = self.selectedResult
+        local item = result and (result.output or result)
+        if item and item.itemID then
+            AHT.Scanner:Start({ { itemID = item.itemID, itemKey = item.itemKey, name = item.name, kind = item.kind } }, "selected")
+        else
+            AHT:Print("Wähle zuerst ein Item in der Liste aus.")
+        end
     end)
 
-    self.matsButton = Button(self.frame, nil, "Markt", 100, 24)
-    self.matsButton:SetPoint("LEFT", self.recipeButton, "RIGHT", 8, 0)
-    self.matsButton:SetScript("OnClick", function() self:SetView("materials") end)
-
-    self.transmuteButton = Button(self.frame, nil, "Transmute", 100, 24)
-    self.transmuteButton:SetPoint("LEFT", self.matsButton, "RIGHT", 8, 0)
+    self.transmuteButton = Button(self.frame, nil, "Transmute", 105, 24)
+    self.transmuteButton:SetPoint("TOPLEFT", 360, -99)
     self.transmuteButton:SetScript("OnClick", function()
-        self:SetView("transmute")
+        self.showTransmutes = not self.showTransmutes
+        self:RefreshControls()
+        self:Refresh()
     end)
 
-    self.reputationButton = Button(self.frame, nil, "Ruf", 70, 24)
-    self.reputationButton:SetPoint("LEFT", self.transmuteButton, "RIGHT", 8, 0)
-    self.reputationButton:SetScript("OnClick", function()
-        self:SetView("reputation")
-    end)
+    self.professionButton = Button(self.frame, nil, "Alle Berufe", 132, 24)
+    self.professionButton:SetPoint("TOPLEFT", 474, -99)
+    self.professionButton:SetScript("OnClick", function() self:CycleProfessionFilter() end)
 
-    self.debugButton = Button(self.frame, nil, "Debug", 80, 24)
-    self.debugButton:SetPoint("LEFT", self.reputationButton, "RIGHT", 8, 0)
-    self.debugButton:SetScript("OnClick", function()
-        self:SetView("diagnostics")
-    end)
-
-    self.ordersButton = Button(self.frame, nil, "Aufträge", 90, 24)
-    self.ordersButton:SetPoint("LEFT", self.transmuteButton, "RIGHT", 8, 0)
-    self.ordersButton:SetScript("OnClick", function()
-        self:SetView("orders")
-    end)
-
-    self.reputationButton:Hide()
-    self.debugButton:Hide()
-
-    self.opportunityButton = Button(self.frame, nil, "Chancen", 85, 24)
-    self.opportunityButton:SetPoint("LEFT", self.ordersButton, "RIGHT", 8, 0)
-    self.opportunityButton:SetScript("OnClick", function() self:SetView("opportunities") end)
-
-    self.moreButton = Button(self.frame, nil, "Mehr", 70, 24)
-    self.moreButton:SetPoint("LEFT", self.opportunityButton, "RIGHT", 8, 0)
+    self.opportunityDirectionButton = Button(self.frame, nil, "Alle Chancen", 122, 24)
+    self.opportunityDirectionButton:SetPoint("TOPLEFT", 360, -99)
+    self.opportunityDirectionButton:SetScript("OnClick", function() self:CycleOpportunityDirection() end)
+    self.opportunityMinimumButton = Button(self.frame, nil, "Vorteil ≥ 0%", 124, 24)
+    self.opportunityMinimumButton:SetPoint("TOPLEFT", 490, -99)
+    self.opportunityMinimumButton:SetScript("OnClick", function() self:CycleOpportunityMinimum() end)
 
     self.moreMenu = CreateFrame("Frame", nil, self.frame, template)
     self.moreMenu:SetSize(156, 74)
@@ -429,7 +635,13 @@ function AHT.UI:Create()
     self.filterButton = Button(self.frame, nil, "Nur profitabel", 105, 24)
     self.filterButton:SetPoint("LEFT", self.searchInput, "RIGHT", 8, 0)
     self.filterButton:SetScript("OnClick", function()
-        self.profitOnly = not self.profitOnly
+        if self.viewMode == "materials" then
+            local nextFilter = { all = "watched", watched = "inventory", inventory = "all" }
+            self.marketFilter = nextFilter[self.marketFilter] or "all"
+            if AHT.DB and AHT.DB.ui then AHT.DB.ui.marketFilter = self.marketFilter end
+        else
+            self.profitOnly = not self.profitOnly
+        end
         self:RefreshControls()
         self:Refresh(true)
     end)
@@ -478,10 +690,42 @@ function AHT.UI:Create()
     local scrollTemplate = "UIPanelScrollFrameTemplate"
     self.scroll = CreateFrame("ScrollFrame", nil, self.frame, scrollTemplate)
     self.scroll:SetPoint("TOPLEFT", 18, -202)
-    self.scroll:SetPoint("BOTTOMRIGHT", -34, 18)
+    self.scroll:SetPoint("BOTTOMRIGHT", -34, 140)
     self.content = CreateFrame("Frame", nil, self.scroll)
     self.content:SetSize(TABLE_WIDTH, 420)
     self.scroll:SetScrollChild(self.content)
+
+    self.detailPanel = CreateFrame("Frame", nil, self.frame, template)
+    self.detailPanel:SetPoint("BOTTOMLEFT", 18, 10)
+    self.detailPanel:SetPoint("BOTTOMRIGHT", -34, 10)
+    self.detailPanel:SetHeight(118)
+    self.detailPanel:SetFrameLevel(self.frame:GetFrameLevel() + 2)
+    MakeBackdrop(self.detailPanel)
+    self.detailTitle = Label(self.detailPanel, "Auswahl", 450)
+    self.detailTitle:SetPoint("TOPLEFT", 10, -7)
+    self.detailTitle:SetFontObject("GameFontHighlight")
+    self.detailTitle:SetTextColor(1, 0.84, 0.35)
+    self.detailSummary = Label(self.detailPanel, "Klicke ein Item für Preis, Verlauf, Zutaten und Bestand.", 450)
+    self.detailSummary:SetPoint("TOPLEFT", 10, -28)
+    self.detailSummary:SetHeight(82)
+    self.detailSummary:SetJustifyV("TOP")
+    if self.detailSummary.SetWordWrap then self.detailSummary:SetWordWrap(true) end
+    self.detailSummary:SetTextColor(0.85, 0.82, 0.74)
+    self.detailAction = Button(self.detailPanel, nil, "Kaufplan", 118, 25)
+    self.detailAction:SetPoint("RIGHT", -130, 0)
+    self.detailAction:SetScript("OnClick", function()
+        local result = self.selectedResult
+        if not result then return end
+        if result.kind == "order" then self:ShowOrderActions(result.order)
+        elseif result.kind == "opportunity" then self:ShowOpportunityActions(result)
+        elseif result.kind == "material" then self:ShowMaterialActions(result)
+        elseif result.output then self:ShowRecipeActions(result) end
+    end)
+    self.detailSearch = Button(self.detailPanel, nil, "Im AH suchen", 112, 25)
+    self.detailSearch:SetPoint("RIGHT", -10, 0)
+    self.detailSearch:SetScript("OnClick", function()
+        if self.selectedResult then self:OpenResultInAuctionHouse(self.selectedResult) end
+    end)
 
     self:CreateRows()
     self:RefreshControls()
@@ -492,6 +736,7 @@ end
 function AHT.UI:CreateRow(index)
     local row = CreateFrame("Button", nil, self.content)
     local rowIndex = index
+    row.rowIndex = rowIndex
     row:SetSize(TABLE_WIDTH, ROW_HEIGHT)
     row:SetPoint("TOPLEFT", 0, -((rowIndex - 1) * ROW_HEIGHT))
     row:EnableMouse(true)
@@ -520,15 +765,7 @@ function AHT.UI:CreateRow(index)
             end
             return
         end
-        if row.result and row.result.kind == "order" then
-            self:ShowOrderActions(row.result.order)
-        elseif row.result and row.result.kind == "opportunity" then
-            self:ShowOpportunityActions(row.result)
-        elseif row.result and row.result.kind == "material" then
-            self:ShowMaterialActions(row.result)
-        elseif row.result and row.result.kind ~= "info" then
-            self:ShowRecipeActions(row.result)
-        end
+        self:SelectResult(row.result)
     end)
     row:SetScript("OnEnter", function()
         if row.result then
@@ -543,7 +780,8 @@ function AHT.UI:CreateRow(index)
         end
     end)
     row:SetScript("OnLeave", function()
-        row.bg:SetColorTexture(rowIndex % 2 == 0 and 0.045 or 0.065, 0.032, 0.018, 0.82)
+        local selected = self.selectedKey and ResultKey(row.result) == self.selectedKey
+        row.bg:SetColorTexture(selected and 0.22 or (rowIndex % 2 == 0 and 0.045 or 0.065), selected and 0.13 or 0.032, selected and 0.035 or 0.018, 1)
         if self.recipeTooltipOwner == row then self:HideRecipeContext() end
     end)
     self.rows[index] = row
@@ -1101,7 +1339,7 @@ function AHT.UI:UpdateHeaders()
     self:LayoutTable()
     self.scroll:ClearAllPoints()
     self.scroll:SetPoint("TOPLEFT", 18, tableMode and -202 or -174)
-    self.scroll:SetPoint("BOTTOMRIGHT", -34, 18)
+    self.scroll:SetPoint("BOTTOMRIGHT", -34, 140)
     if not tableMode then
         self.tableHeader:Hide()
         return
@@ -1161,7 +1399,19 @@ function AHT.UI:MatchesFilter(result)
         }, " "))
         if not string.find(haystack, query, 1, true) then return false end
     end
-    if self.profitOnly and result.kind ~= "order" then
+    if self.viewMode == "materials" then
+        if self.marketFilter == "watched" and not result.isWatched then return false end
+        if self.marketFilter == "inventory" and not result.inInventory then return false end
+    end
+    if (self.viewMode == "recipes" or self.viewMode == "transmute") and self.professionFilter
+            and result.professionName ~= self.professionFilter then return false end
+    if self.viewMode == "opportunities" and result.kind == "opportunity" then
+        if self.opportunityDirection and self.opportunityDirection ~= "all"
+                and result.side ~= self.opportunityDirection then return false end
+        local minimum = tonumber(self.minimumOpportunityPercent) or 0
+        if minimum > 0 and (tonumber(result.discount) or 0) < minimum then return false end
+    end
+    if self.profitOnly and (self.viewMode == "recipes" or self.viewMode == "transmute" or self.viewMode == "opportunities") then
         local profit = tonumber(result.profit)
         if profit == nil and result.kind == "material" then
             profit = (tonumber(result.marketValue) or 0) - (tonumber(result.currentPrice) or 0)
@@ -1172,6 +1422,111 @@ function AHT.UI:MatchesFilter(result)
         if profit == nil or profit <= 0 then return false end
     end
     return true
+end
+
+function AHT.UI:SelectResult(result)
+    if not result or result.kind == "info" then
+        self.selectedResult = nil
+        self.selectedKey = nil
+    else
+        self.selectedResult = result
+        self.selectedKey = ResultKey(result)
+    end
+    self:RefreshDetail()
+    for _, row in ipairs(self.rows or {}) do
+        if row.result then
+            local selected = self.selectedKey and ResultKey(row.result) == self.selectedKey
+            row.bg:SetColorTexture(selected and 0.22 or (row.rowIndex % 2 == 0 and 0.045 or 0.065), selected and 0.13 or 0.032, selected and 0.035 or 0.018, 1)
+        end
+    end
+end
+
+function AHT.UI:RefreshDetail()
+    if not self.detailPanel then return end
+    local result = self.selectedResult
+    if not result then
+        self.detailTitle:SetText("Auswahl")
+        self.detailSummary:SetText("Klicke ein Item für Preise, Verlauf, Zutaten und Bestand. Aktionen sind rechts beschriftet.")
+        self.detailAction:Disable()
+        self.detailSearch:Hide()
+        return
+    end
+
+    local lines = {}
+    local searchable = false
+    if result.kind == "material" then
+        local counts = AHT.Inventory and AHT.Inventory:GetCount(result.itemID) or { bags = 0, bank = 0, bankKnown = false }
+        table.insert(lines, string.format("Aktuell %s  |  Marktwert %s  |  Ø %s  |  Markttrend %s",
+            PriceText(result.currentPrice), PriceText(result.marketValue), PriceText(result.averagePrice), PercentText(result.marketTrendPercent)))
+        table.insert(lines, string.format("Seit letztem Scan %s  |  %d Listings / %d Stück  |  Tasche %d, Bank %s  |  %s",
+            PercentText(result.priceChangePercent), result.listingCount or 0, result.totalQuantity or 0,
+            counts.bags or 0, counts.bankKnown and tostring(counts.bank or 0) or "?", ScanAgeText(result.updatedAt)))
+        self.detailAction:SetText("Aktionen")
+        searchable = true
+    elseif result.kind == "opportunity" then
+        local direction = result.side == "sell" and "Verkauf" or "Kauf"
+        table.insert(lines, string.format("%s-Chance  |  Aktuell %s  |  Marktwert %s  |  Vorteil %s  |  Netto %s  |  ROI %s",
+            direction, PriceText(result.currentPrice), PriceText(result.marketValue), PercentText(result.discount),
+            PriceText(result.profit), PercentText(result.roi)))
+        table.insert(lines, string.format("Angebotsmenge %d  |  Historische Samples %d  |  %s",
+            result.quantity or 0, result.sampleCount or result.marketSamples or 0, ScanAgeText(result.updatedAt)))
+        self.detailAction:SetText(result.side == "sell" and "Verkaufsplan" or "Kaufchance")
+        searchable = result.itemID ~= nil
+    elseif result.kind == "order" then
+        local order = result.order or {}
+        local requirements = {}
+        for index, requirement in ipairs(order.requirements or {}) do
+            if index <= 3 then
+                local itemName = requirement.name or AHT:GetItemInfo(requirement.itemID) or tostring(requirement.itemID)
+                table.insert(requirements, string.format("%s: %d/%d", itemName,
+                    requirement.bought or 0, requirement.toBuy or requirement.quantity or 0))
+            end
+        end
+        table.insert(lines, string.format("%d Herstellvorgänge  |  Status: %s  |  Offen: %d  |  Ausgegeben: %s",
+            result.crafts or 0, result.statusText or "?", result.remainingCount or 0, PriceText(result.spent or 0)))
+        if #requirements > 0 then table.insert(lines, table.concat(requirements, "  •  ")) end
+        self.detailAction:SetText("Auftrag öffnen")
+    else
+        local output = result.output or {}
+        local snapshot = result.marketSnapshot or (output.itemID and AHT.Store:GetMarketSnapshot(output.itemID))
+        local sale = result.currentSalePrice or result.salePrice
+        table.insert(lines, string.format("Kosten %s  |  Aktueller Verkauf %s  |  Marktwert %s  |  Netto %s  |  Marge %s  |  Vorschlag %d Herstellvorgänge",
+            PriceText(result.ingredientCost), PriceText(sale), PriceText(result.marketSalePrice), PriceText(result.profit),
+            result.margin and string.format("%.1f%%", result.margin) or "-", result.suggestedCrafts or 0))
+        table.insert(lines, string.format("Seit letztem Scan %s  |  Markttrend %s  |  %s",
+            PercentText(snapshot and snapshot.priceChangePercent), PercentText(snapshot and snapshot.trendPercent), ScanAgeText(snapshot and snapshot.updatedAt)))
+        local ingredients = {}
+        local crafts = math.max(1, tonumber(result.suggestedCrafts) or 0)
+        for index, reagent in ipairs(result.reagents or {}) do
+            if index <= 3 then
+                local quantity = (tonumber(reagent.quantity) or 1) * crafts
+                local itemName = reagent.name or AHT:GetItemInfo(reagent.itemID) or tostring(reagent.itemID)
+                local price = AHT.Store and AHT.Store:GetPrice(reagent.itemID)
+                local count = AHT.Inventory and AHT.Inventory:GetCount(reagent.itemID) or { bags = 0, bank = 0, bankKnown = false }
+                local reserved = AHT.Production and AHT.Production:GetReserved(reagent.itemID) or 0
+                local knownStock = (count.bags or 0) + (count.bankKnown and (count.bank or 0) or 0)
+                local available = math.max(0, knownStock - reserved)
+                local missing = available >= quantity and 0 or count.bankKnown and (quantity - available) or "?"
+                table.insert(ingredients, string.format("%dx %s @ %s [T%d/B%s, reserviert %d, fehlen %s]", quantity, itemName, PriceText(price),
+                    count.bags or 0, count.bankKnown and tostring(count.bank or 0) or "?", reserved, tostring(missing)))
+            end
+        end
+        if #ingredients > 0 then
+            local extra = math.max(0, #(result.reagents or {}) - #ingredients)
+            local craftLabel = crafts == 1 and "1 Herstellvorgang" or string.format("%d Herstellvorgänge", crafts)
+            table.insert(lines, string.format("Zutaten für %s: %s%s", craftLabel, table.concat(ingredients, "  •  "),
+                extra > 0 and string.format("  +%d weitere", extra) or ""))
+        else
+            table.insert(lines, "Zutaten und Einkaufspreise sind noch nicht vollständig erfasst.")
+        end
+        self.detailAction:SetText("Kaufplan")
+        searchable = output.itemID ~= nil
+    end
+
+    self.detailTitle:SetText(result.name or (result.order and result.order.name) or "Itemdetails")
+    self.detailSummary:SetText(table.concat(lines, "\n"))
+    self.detailAction:Enable()
+    if searchable then self.detailSearch:Show() else self.detailSearch:Hide() end
 end
 
 function AHT.UI:HideRecipeContext()
@@ -1363,61 +1718,106 @@ end
 
 function AHT.UI:RefreshStatus()
     if not self.status then return end
-    local state = AHT.State.status or "?"
+    local stateLabels = {
+        starting = "lädt",
+        ready = "bereit",
+        ah_open = "AH offen",
+        ah_closed = "AH geschlossen",
+        scanning = "Scan läuft",
+        market_discovery = "Marktscan läuft",
+        database_missing = "Daten fehlen",
+        database_invalid = "Datenfehler",
+    }
+    local state = stateLabels[AHT.State.status] or "bereit"
     local progress = ""
     if AHT.Scanner and AHT.Scanner.running then
-        progress = string.format(" | %d/%d", AHT.Scanner.completed, AHT.Scanner.total)
+        local run = AHT.Scanner.scanRun or {}
+        progress = string.format(" | Lauf %d/%d, %d ok, %d verworfen",
+            AHT.Scanner.completed, AHT.Scanner.total, run.itemCount or 0, run.rejectedCount or 0)
     elseif AHT.Scanner and AHT.Scanner.marketDiscovery then
-        progress = string.format(" | %d Items / %d Seiten", AHT.Scanner.marketDiscovery.itemCount or 0, AHT.Scanner.marketDiscovery.pageCount or 0)
+        local run = AHT.Scanner.scanRun or {}
+        progress = string.format(" | Lauf %d Items/%d Seiten, %d verworfen",
+            AHT.Scanner.marketDiscovery.itemCount or 0, AHT.Scanner.marketDiscovery.pageCount or 0, run.rejectedCount or 0)
     end
     local view = VIEW_INFO[self.viewMode] or VIEW_INFO.recipes
-    self.status:SetText("Ansicht: " .. view.title .. " | Status: " .. state .. progress)
+    local scan = AHT.DB and AHT.DB.scan
+    local scanSummary = "kein Scan"
+    if scan and scan.finishedAt then
+        local scanLabels = { completed = "fertig", partial = "teilweise", aborted = "abgebrochen", failed = "fehlgeschlagen" }
+        scanSummary = string.format("%s %d Items/%d Seiten, %s",
+            scanLabels[scan.status] or "unbekannt", scan.itemCount or 0, scan.pageCount or 0, ScanAgeText(scan.finishedAt))
+    end
+    local marketCount = AHT:TableCount(AHT.DB and AHT.DB.market)
+    local historyCount = AHT:TableCount(AHT.DB and AHT.DB.history)
+    self.status:SetText(string.format("%s | Markt %d / Verlauf %d | Letzter Scan: %s%s", state, marketCount, historyCount, scanSummary, progress))
     if self.viewTitle then self.viewTitle:SetText(view.title) end
-    local help = view.help
-    if self.lastMessage ~= "" then help = help .. " | " .. self.lastMessage end
+    local help = self.lastMessage ~= "" and self.lastMessage or view.help
     if self.viewHelp then self.viewHelp:SetText(help) end
     local scanning = AHT.Scanner and (AHT.Scanner.running or AHT.Scanner.marketDiscovery)
-    self.scanButton:SetText(scanning and "Abbrechen" or (self.viewMode == "opportunities" and "AH-Markt" or "AH Scan"))
+    self.scanButton:SetText(scanning and "Abbrechen" or "Scannen ▾")
 end
 
 function AHT.UI:BuildMaterialRows()
-    local rows, materials = {}, AHT.DB and AHT.DB.materials or {}
-    local list = {}
-    for _, material in pairs(materials) do table.insert(list, material) end
-    table.sort(list, function(a, b)
-        return tostring(a.name or a.itemID) < tostring(b.name or b.itemID)
-    end)
-    for _, material in ipairs(list) do
-        local record = AHT.Store and AHT.Store:GetByItemID(material.itemID)
-        local snapshot = AHT.Store and AHT.Store:GetMarketSnapshot(material.itemID) or nil
-        local currentPrice = snapshot and snapshot.currentPrice or record and tonumber(record.minPrice) or nil
-        local averagePrice = snapshot and snapshot.averagePrice or AHT.Store and AHT.Store:RecencyAverage(material.itemID) or nil
-        local marketValue = snapshot and snapshot.marketValue or nil
-        local priceChangePercent = snapshot and snapshot.priceChangePercent or nil
-        local marketTrendPercent = snapshot and snapshot.trendPercent or nil
+    local rows = {}
+    local materials = AHT.DB and AHT.DB.materials or {}
+    local market = AHT.DB and AHT.DB.market or {}
+    local inventorySet = self.marketFilter == "inventory" and AHT.Inventory and AHT.Inventory:GetAvailableItemSet() or {}
+    local seen = {}
+
+    local function AddRow(key, record, material)
+        local itemID = tonumber((record and record.itemID) or (material and material.itemID))
+        if not itemID then return end
+        local rowKey = tostring(key or itemID)
+        if seen[rowKey] then return end
+        seen[rowKey] = true
+        local snapshot = AHT.Store and AHT.Store:GetMarketSnapshot(itemID, record and record.itemKey) or nil
         local updatedAt = snapshot and snapshot.updatedAt or record and tonumber(record.updatedAt) or nil
-        local updatedText = updatedAt and date("%d.%m.%y", updatedAt) or "-"
+        local name = material and material.name or record and record.name or tostring(itemID)
         table.insert(rows, {
             kind = "material",
-            name = material.name or "?",
-            itemID = tonumber(material.itemID) or material.itemID,
-            currentPrice = currentPrice,
-            marketValue = marketValue,
-            averagePrice = averagePrice,
-            priceChangePercent = priceChangePercent,
-            marketTrendPercent = marketTrendPercent,
-            trendText = priceChangePercent and string.format("%+.1f%%", priceChangePercent) or "-",
+            name = name,
+            itemID = itemID,
+            itemKey = record and record.itemKey,
+            marketKey = rowKey,
+            isWatched = material ~= nil,
+            inInventory = inventorySet[tostring(itemID)] == true,
+            currentPrice = snapshot and snapshot.currentPrice or record and tonumber(record.minPrice) or nil,
+            marketValue = snapshot and snapshot.marketValue or nil,
+            averagePrice = snapshot and snapshot.averagePrice or nil,
+            priceChangePercent = snapshot and snapshot.priceChangePercent or nil,
+            marketTrendPercent = snapshot and snapshot.trendPercent or nil,
+            trendText = PercentText(snapshot and snapshot.trendPercent),
             p25 = snapshot and snapshot.p25,
             p75 = snapshot and snapshot.p75,
-            totalQuantity = snapshot and snapshot.totalQuantity or 0,
-            listingCount = snapshot and snapshot.listingCount or 0,
+            totalQuantity = snapshot and snapshot.totalQuantity or tonumber(record and record.totalQuantity) or 0,
+            listingCount = snapshot and snapshot.listingCount or tonumber(record and record.listingCount) or 0,
             marketSamples = snapshot and snapshot.marketSamples or 0,
+            scanSamples = snapshot and snapshot.scanSamples or 0,
             updatedAt = updatedAt,
-            updatedText = updatedText,
+            updatedText = updatedAt and date("%d.%m.%y", updatedAt) or "-",
         })
     end
+
+    for key, record in pairs(market) do
+        if type(record) == "table" then
+            local material = materials[tostring(record.itemID or "")]
+            AddRow(key, record, material)
+        end
+    end
+    for _, material in pairs(materials) do
+        local record, key
+        if AHT.Store then record, key = AHT.Store:GetByItemID(material.itemID) end
+        AddRow(key or ("watch:" .. tostring(material.itemID)), record, material)
+    end
+
+    table.sort(rows, function(a, b)
+        return string.lower(tostring(a.name)) < string.lower(tostring(b.name))
+    end)
     if #rows == 0 then
-        table.insert(rows, { kind = "info", text = "Keine Materialien. Item-Link oder Item-ID oben eingeben und + Mat drücken." })
+        local message = self.marketFilter == "watched" and "Keine beobachteten Items. Füge ein Item über Material hinzu."
+            or self.marketFilter == "inventory" and "Keine Items in Taschen/Bank gefunden. Öffne die Bank, damit der Bestand aktualisiert wird."
+            or "Noch keine Items erfasst. Starte 'Ganzer AH-Markt' oder einen Scan bekannter Items."
+        table.insert(rows, { kind = "info", text = message })
     end
     return rows
 end
@@ -1427,7 +1827,36 @@ function AHT.UI:BuildOpportunityRows()
     if AHT.Calculator then AHT.Calculator:Refresh() end
     local rows = AHT.Opportunities and AHT.Opportunities:Build() or {}
     if #rows == 0 then
-        table.insert(rows, { kind = "info", text = "Keine Chance gefunden. In dieser Ansicht 'AH-Markt' ausführen. Der erste Scan inventarisiert alle AH-Browse-Items; belastbare Schnäppchen erscheinen ab dem zweiten Scan mit Historie." })
+        local scan = AHT.DB and AHT.DB.scan or {}
+        local marketCount = AHT:TableCount(AHT.DB and AHT.DB.market)
+        local message
+        if marketCount == 0 or not scan.finishedAt then
+            message = "Noch kein AH-Markt-Scan gespeichert. Wähle 'Ganzer AH-Markt'; dieser erfasst Items unabhängig von Rezepten und Überwachung."
+        elseif scan.status == "partial" or scan.status == "aborted" then
+            message = "Der letzte AH-Markt-Scan war nur teilweise. Bereits erfasste Preise bleiben erhalten; starte ihn erneut für den Rest."
+        elseif scan.status == "failed" then
+            message = "Der letzte AH-Markt-Scan ist fehlgeschlagen. Gespeicherte alte Preise bleiben bestehen; prüfe den AH und starte erneut."
+        else
+            local currentListings, historyReady = 0, 0
+            local minimumSamples = tonumber(AHT.DB.settings.minMarketSamples) or 2
+            for _, record in pairs(AHT.DB.market or {}) do
+                local snapshot = record.itemID and AHT.Store:GetMarketSnapshot(record.itemID, record.itemKey)
+                if snapshot and snapshot.currentPrice and snapshot.currentPrice > 0 then
+                    currentListings = currentListings + 1
+                    if math.max(snapshot.marketSamples or 0, snapshot.scanSamples or 0) >= minimumSamples then
+                        historyReady = historyReady + 1
+                    end
+                end
+            end
+            if currentListings == 0 then
+                message = "Kein aktuelles Listing gefunden. Führe einen neuen AH-Markt-Scan aus, um die Marktlage zu aktualisieren."
+            elseif historyReady == 0 then
+                message = string.format("Noch zu wenig Historie für Chancen: pro Item werden mindestens %d Scans benötigt. Scanne den AH-Markt später erneut.", minimumSamples)
+            else
+                message = "Keine Chance erfüllt derzeit die gewählte Richtung und den Mindestvorteil. Filter lockern oder später erneut scannen."
+            end
+        end
+        table.insert(rows, { kind = "info", text = message })
     end
     return rows
 end
@@ -1498,6 +1927,10 @@ function AHT.UI:BuildDiagnosticsRows()
     table.insert(rows, { kind = "info", text = string.format("Version %s | Client %s | Build %s | Interface %s", AHT.VERSION, tostring(c.version), tostring(c.build), tostring(c.interface)) })
     table.insert(rows, { kind = "info", text = string.format("WOW_PROJECT_ID=%s | Forever-Beta=%s | AH offen=%s", tostring(c.projectID), tostring(c.foreverBeta), tostring(AHT.AHOpen)) })
     table.insert(rows, { kind = "info", text = string.format("Rezepte=%d | Markt=%d | Materialien=%d | Aufträge=%d", #((AHT.Recipes and AHT.Recipes:GetList()) or {}), AHT:TableCount(AHT.DB and AHT.DB.market), AHT:TableCount(AHT.DB and AHT.DB.materials), #((AHT.Production and AHT.Production:GetActiveOrders()) or {})) })
+    local scan = AHT.DB and AHT.DB.scan or {}
+    table.insert(rows, { kind = "info", text = string.format("Scan=%s | erfasst=%d | verworfen=%d | Seiten=%d | DB-Referenz kanonisch=%s",
+        tostring(scan.status or "never"), tonumber(scan.itemCount) or 0, tonumber(scan.rejectedCount) or 0,
+        tonumber(scan.pageCount) or 0, AHT.DB == WOW4E_AHT_DB and "ja" or "nein") })
     local names = {}
     for name in pairs(c.functions or {}) do table.insert(names, name) end
     table.sort(names)
@@ -1522,15 +1955,36 @@ function AHT.UI:Refresh(skipCalculator)
         results = self:BuildDiagnosticsRows()
     else
         if not skipCalculator and AHT.Calculator then AHT.Calculator:Refresh() end
-        results = mode == "transmute" and AHT.Calculator and AHT.Calculator:CalculateTransmutes() or (AHT.Calculator and AHT.Calculator.results)
-        results = results or {}
-        results = self:SortResults(results)
-        if #results == 0 then
-            results = {{ kind = "info", text = mode == "transmute" and "Keine Transmutationsrezepte erkannt. Öffne das Berufsfenster und aktualisiere die Rezepte." or "Keine Rezepte erkannt. Öffne das Berufsfenster und aktualisiere die Rezepte." }}
+        local candidates = self.showTransmutes and AHT.Calculator and AHT.Calculator:CalculateTransmutes() or (AHT.Calculator and AHT.Calculator.results)
+        candidates = candidates or {}
+        if #candidates == 0 then
+            local professionCount = AHT:TableCount(AHT.DB and AHT.DB.professions)
+            local text
+            if self.showTransmutes then
+                text = "Keine Transmutationsrezepte erkannt. Prüfe, ob die passenden Berufsdaten synchronisiert wurden."
+            elseif professionCount == 0 then
+                text = "Noch kein Beruf synchronisiert. Öffne ein Berufsfenster; AHT übernimmt Rezepte und merkt sie sich dauerhaft."
+            else
+                text = "Berufsdaten sind gespeichert, aber es wurden keine herstellbaren Rezepte gefunden."
+            end
+            results = { { kind = "info", text = text } }
+        else
+            results = self:SortResults(candidates)
         end
     end
     if #results == 0 then
-        results = {{ kind = "info", text = "Keine Treffer für die aktuelle Suche oder den Filter." }}
+        local text = mode == "opportunities"
+            and "Keine Treffer für die gewählte Richtung, Suche oder den Mindestvorteil. Filter lockern."
+            or "Keine Treffer für die aktuelle Suche oder den Filter."
+        results = {{ kind = "info", text = text }}
+    end
+    if self.selectedKey then
+        local selected
+        for _, result in ipairs(results) do
+            if ResultKey(result) == self.selectedKey then selected = result break end
+        end
+        self.selectedResult = selected
+        if not selected then self.selectedKey = nil end
     end
     self:EnsureRows(#results)
     self:UpdateHeaders()
@@ -1539,6 +1993,8 @@ function AHT.UI:Refresh(skipCalculator)
         local result = results[index]
         row.result = result
         if result then
+            local selected = self.selectedKey and ResultKey(result) == self.selectedKey
+            row.bg:SetColorTexture(selected and 0.22 or (index % 2 == 0 and 0.045 or 0.065), selected and 0.13 or 0.032, selected and 0.035 or 0.018, 1)
             for cellIndex = 1, MAX_COLUMNS do row.cells[cellIndex]:SetTextColor(1, 1, 1) end
             if result.kind == "info" then
                 row.info:SetText(result.text or "")
@@ -1547,18 +2003,16 @@ function AHT.UI:Refresh(skipCalculator)
                 row:EnableMouse(true)
             elseif result.kind == "material" then
                 row.info:Hide()
-                row.cells[1]:SetText(result.name or "?")
-                row.cells[2]:SetText(tostring(result.itemID or "?"))
-                row.cells[3]:SetText(result.currentPrice and AHT:FormatMoneyPlain(result.currentPrice) or AHT.L.noData)
-                row.cells[4]:SetText(result.marketValue and AHT:FormatMoneyPlain(result.marketValue) or AHT.L.noData)
-                row.cells[5]:SetText(result.averagePrice and AHT:FormatMoneyPlain(result.averagePrice) or AHT.L.noData)
-                row.cells[6]:SetText(result.trendText or "-")
-                row.cells[7]:SetText(result.updatedText or "-")
+                row.cells[1]:SetText((result.isWatched and "★ " or "") .. (result.name or "?"))
+                row.cells[2]:SetText(PriceText(result.currentPrice))
+                row.cells[3]:SetText(PriceText(result.marketValue))
+                row.cells[4]:SetText(PercentText(result.marketTrendPercent))
+                row.cells[5]:SetText(result.updatedText .. " (" .. ScanAgeText(result.updatedAt) .. ")")
                 for index = 1, #MATERIAL_COLUMNS do row.cells[index]:Show() end
                 for index = #MATERIAL_COLUMNS + 1, MAX_COLUMNS do row.cells[index]:Hide() end
-                row.cells[3]:SetTextColor(1, 0.85, 0.4)
-                row.cells[4]:SetTextColor(0.45, 1, 0.55)
-                row.cells[5]:SetTextColor(0.45, 1, 0.55)
+                row.cells[2]:SetTextColor(1, 0.85, 0.4)
+                row.cells[3]:SetTextColor(0.45, 0.85, 1)
+                if result.marketTrendPercent and result.marketTrendPercent < -10 then row.cells[4]:SetTextColor(0.45, 1, 0.55) end
                 row:EnableMouse(true)
             elseif result.kind == "opportunity" then
                 row.info:Hide()
@@ -1568,9 +2022,8 @@ function AHT.UI:Refresh(skipCalculator)
                 row.cells[3]:SetText(result.marketValue and AHT:FormatMoneyPlain(result.marketValue) or "-")
                 row.cells[4]:SetText(string.format("%.1f%%", result.discount or 0))
                 row.cells[5]:SetText(result.profit and AHT:FormatMoneyPlain(result.profit) or "-")
-                row.cells[6]:SetText(string.format("%.1f%%", result.roi or 0))
-                row.cells[7]:SetText(tostring(result.quantity or 0))
                 for index = 1, #OPPORTUNITY_COLUMNS do row.cells[index]:Show() end
+                for index = #OPPORTUNITY_COLUMNS + 1, MAX_COLUMNS do row.cells[index]:Hide() end
                 row.cells[2]:SetTextColor(result.side == "sell" and 1 or 1, result.side == "sell" and 0.65 or 0.85, 0.35)
                 row.cells[4]:SetTextColor(result.side == "sell" and 0.45 or 0.35, 1, 0.45)
                 if result.profit and result.profit > 0 then row.cells[5]:SetTextColor(0.35, 1, 0.35) end
@@ -1592,16 +2045,13 @@ function AHT.UI:Refresh(skipCalculator)
                 local cost = result.ingredientCost and AHT:FormatMoneyPlain(result.ingredientCost) or "?"
                 local currentSale = result.currentSalePrice or result.salePrice
                 local currentText = currentSale and AHT:FormatMoneyPlain(currentSale) or "?"
-                local marketText = result.marketSalePrice and AHT:FormatMoneyPlain(result.marketSalePrice) or "?"
                 local prefix = result.isDeal and "★ " or ""
                 row.info:Hide()
                 row.cells[1]:SetText(prefix .. (result.name or "?"))
                 row.cells[2]:SetText(cost)
                 row.cells[3]:SetText(currentText)
-                row.cells[4]:SetText(marketText)
-                row.cells[5]:SetText(profit)
-                row.cells[6]:SetText(margin)
-                row.cells[7]:SetText((result.suggestedCrafts or 0) > 0 and tostring(result.suggestedCrafts) or "-")
+                row.cells[4]:SetText(profit)
+                row.cells[5]:SetText(margin)
                 for index = 1, #RECIPE_COLUMNS do row.cells[index]:Show() end
                 for index = #RECIPE_COLUMNS + 1, MAX_COLUMNS do row.cells[index]:Hide() end
                 if currentSale and result.marketSalePrice then
@@ -1615,11 +2065,10 @@ function AHT.UI:Refresh(skipCalculator)
                 else
                     row.cells[3]:SetTextColor(1, 0.85, 0.4)
                 end
-                row.cells[4]:SetTextColor(0.45, 0.85, 1)
                 if result.profit and result.profit >= 0 then
-                    row.cells[5]:SetTextColor(0.35, 1, 0.35)
+                    row.cells[4]:SetTextColor(0.35, 1, 0.35)
                 else
-                    row.cells[5]:SetTextColor(1, 0.45, 0.35)
+                    row.cells[4]:SetTextColor(1, 0.45, 0.35)
                 end
                 row:EnableMouse(true)
             end
@@ -1631,15 +2080,22 @@ function AHT.UI:Refresh(skipCalculator)
             row:Hide()
         end
     end
+    self:RefreshDetail()
     self:RefreshStatus()
 end
 
 function AHT.UI:Show()
-    if not AHT.Initialized and AHT.Initialize then AHT:Initialize(true) end
+    if not AHT.Initialized and AHT.Initialize then AHT:Initialize() end
+    if not AHT.Initialized then
+        self:ShowDatabaseRecovery()
+        return false
+    end
     if not self.frame then self:Create() end
     self:RestoreFrameStrata()
     AHT:Refresh()
     self.frame:Show()
+    self:HideDatabaseRecovery()
+    return true
 end
 
 function AHT.UI:ShowAHButton()

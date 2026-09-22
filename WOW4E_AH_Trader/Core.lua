@@ -2,11 +2,12 @@ WOW4E_AHT = WOW4E_AHT or {}
 local AHT = WOW4E_AHT
 
 AHT.ADDON_NAME = "WOW4E_AH_Trader"
-AHT.VERSION = "0.7.1-beta"
+AHT.VERSION = "0.8.0-beta"
 AHT.AHOpen = false
 AHT.Initialized = false
 AHT.State = {
     status = "starting",
+    dbReady = false,
     lastError = nil,
     lastOperation = nil,
 }
@@ -130,38 +131,52 @@ function AHT:CallSafely(label, fn, ...)
     return true, a, b, c, d
 end
 
-function AHT:Initialize(allowEmpty)
+function AHT:Initialize()
     if self.Initialized then return end
-    -- Some Forever beta builds can deliver ADDON_LOADED before the
-    -- SavedVariables table is available. Do not create an empty database in
-    -- that window; PLAYER_LOGIN/PLAYER_ENTERING_WORLD retries initialization.
     if type(WOW4E_AHT_DB) ~= "table" then
-        if not allowEmpty then
-            self.State.status = "waiting_for_saved_variables"
-            return false
-        end
-        -- A genuinely new profile has no SavedVariables table yet. Create it
-        -- only after the login/UI phase, so a delayed SavedVariables load can
-        -- still win during ADDON_LOADED.
-        WOW4E_AHT_DB = {}
+        self.State.status = "database_missing"
+        self.State.dbReady = false
+        if self.UI and self.UI.ShowDatabaseRecovery then self.UI:ShowDatabaseRecovery() end
+        return false
+    end
+
+    local database = self.Store and self.Store:Load()
+    if not database then
+        self.State.status = "database_invalid"
+        self.State.dbReady = false
+        if self.UI and self.UI.ShowDatabaseRecovery then self.UI:ShowDatabaseRecovery() end
+        return false
     end
     self.Initialized = true
+    self.State.dbReady = true
 
-    if self.Store then self.Store:Load() end
     if self.Recipes and self.Recipes.Load then self.Recipes:Load() end
     if self.Capabilities then self.Capabilities:Probe() end
     if self.Inventory then self.Inventory:Initialize() end
     if self.Tooltips then self.Tooltips:Initialize() end
     if self.Production then self.Production:Initialize() end
     if self.UI then self.UI:Create() end
+    if self.UI and self.UI.HideDatabaseRecovery then self.UI:HideDatabaseRecovery() end
     if self.Reputation then self.Reputation:Initialize() end
 
     self.State.status = "ready"
-    self:Print(string.format(self.L and self.L.loaded or "%s geladen", self.VERSION))
-    if self.Capabilities then
-        self:Print(self.Capabilities:Summary())
-    end
     return true
+end
+
+function AHT:InitializeNewDatabase()
+    if self.Initialized then return false end
+    local created, reason = self.Store and self.Store:CreateNew()
+    if not created then
+        self.State.lastError = tostring(reason or "Neue Datenbank konnte nicht angelegt werden.")
+        if self.UI and self.UI.ShowDatabaseRecovery then self.UI:ShowDatabaseRecovery() end
+        return false
+    end
+    local initialized = self:Initialize()
+    if initialized and self.UI then
+        if self.UI.HideDatabaseRecovery then self.UI:HideDatabaseRecovery() end
+        self.UI:Show()
+    end
+    return initialized == true
 end
 
 function AHT:OnEvent(eventName, ...)
@@ -172,12 +187,28 @@ function AHT:OnEvent(eventName, ...)
     end
 
     if eventName == "PLAYER_LOGIN" or eventName == "PLAYER_ENTERING_WORLD" then
-        if not self.Initialized then self:Initialize(true) end
+        if not self.Initialized then self:Initialize() end
         return
     end
 
     if eventName == "PLAYER_LOGOUT" then
         if self.Store then self.Store:Save() end
+        return
+    end
+
+    if not self.Initialized and type(WOW4E_AHT_DB) == "table" then
+        self:Initialize()
+    end
+    if not self.Initialized then
+        if eventName == "AUCTION_HOUSE_SHOW" then
+            self.AHOpen = true
+            self.State.status = "database_missing"
+            if self.UI and self.UI.ShowAHButton then self.UI:ShowAHButton() end
+        elseif eventName == "AUCTION_HOUSE_CLOSED" then
+            self.AHOpen = false
+            if self.UI and self.UI.HideAHButton then self.UI:HideAHButton() end
+        end
+        if self.UI and self.UI.ShowDatabaseRecovery then self.UI:ShowDatabaseRecovery() end
         return
     end
 
@@ -211,7 +242,6 @@ function AHT:OnEvent(eventName, ...)
             eventName == "TRADE_SKILL_DATA_SOURCE_CHANGED" or
             eventName == "TRADE_SKILL_RECIPE_LIST_UPDATE" or
             eventName == "TRADE_SKILL_UPDATE" then
-        if not self.Initialized then self:Initialize(true) end
         if self.Recipes then self.Recipes:Refresh() end
     elseif eventName == "TRADE_SKILL_CLOSE" then
         self.State.status = self.AHOpen and "ah_open" or "ready"
@@ -277,9 +307,11 @@ SlashCmdList.WOW4E_AHT = function(message)
         AHT:Print(AHT.L and AHT.L.reset or "Marktdaten gelöscht.")
     elseif command == "debug" then
         if AHT.UI then AHT.UI:SetView("diagnostics") end
+    elseif command == "newdb" then
+        AHT:InitializeNewDatabase()
     elseif command == "post" then
         AHT:Print(AHT.L and AHT.L.postHint or "Posten erfolgt über eine sichtbare Vorschau im Addon.")
     else
-        AHT:Print("/aht | scan [all] | stop | recipes | mats add <Item-Link> | mats remove <Item-Link> | transmute | orders | chancen | ruf | reset | debug")
+        AHT:Print("/aht | scan [all] | stop | recipes | mats add <Item-Link> | mats remove <Item-Link> | transmute | orders | chancen | ruf | reset | debug | newdb")
     end
 end

@@ -19,6 +19,8 @@ function AHT.Calculator:CalculateRecipe(recipe)
     local result = {
         recipeID = recipe.recipeID,
         name = recipe.name,
+        professionName = recipe.professionName,
+        professionID = recipe.professionID,
         output = recipe.output,
         reagents = recipe.reagents,
         missing = {},
