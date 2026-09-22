@@ -634,7 +634,10 @@ function AHT.UI:CreateAHRecipePanel(auctionHouse)
 
     panel.close = Button(panel, nil, CLOSE or "Close", 80, 24)
     panel.close:SetPoint("TOPRIGHT", -14, -12)
-    panel.close:SetScript("OnClick", function() panel:Hide() end)
+    panel.close:SetScript("OnClick", function()
+        panel:Hide()
+        if self.ahRecipeTab then self.ahRecipeTab:Hide() end
+    end)
 
     panel.summary = Label(panel, "", 720)
     panel.summary:SetPoint("TOPLEFT", 16, -82)
@@ -975,6 +978,7 @@ function AHT.UI:ShowAHRecipePanel(recipe, refresh)
     self:CreateAHRecipePanel(auctionHouse)
     self.ahCraftRecipe = recipe or self.ahCraftRecipe
     if not self.ahCraftRecipe then return false end
+    self:ShowAHRecipeTab(auctionHouse)
     self.ahRecipePanel:Show()
     if self.ahRecipeTab then self.ahRecipeTab:SetText("AHT Rezept") end
     if refresh then self:StartAHRecipeListingScan(self.ahCraftRecipe) else self:RenderAHRecipePanel() end
@@ -1599,23 +1603,26 @@ end
 
 function AHT.UI:ShowAHButton()
     local auctionHouse = _G.AuctionHouseFrame
-    local parent = auctionHouse or UIParent
     if not self.ahButton then
-        self.ahButton = Button(parent, "WOW4E_AH_Trader_AHButton", "AH Trader", 100, 24)
+        -- Parent the control to UIParent. As a child of AuctionHouseFrame it
+        -- can be painted below the Blizzard title-bar texture even with a
+        -- higher local frame level.
+        self.ahButton = Button(UIParent, "WOW4E_AH_Trader_AHButton", "AH Trader", 100, 24)
         self.ahButton:SetScript("OnClick", function() self:Show() end)
     else
-        self.ahButton:SetParent(parent)
+        self.ahButton:SetParent(UIParent)
     end
     self.ahButton:ClearAllPoints()
     if auctionHouse then
         -- The Forever AH has an empty slot in its title bar on the left. Keep
         -- the button in that bar so it does not cover the search controls.
-        self.ahButton:SetPoint("TOPLEFT", auctionHouse, "TOPLEFT", 88, -4)
-        self.ahButton:SetFrameStrata(auctionHouse:GetFrameStrata() or "HIGH")
-        self.ahButton:SetFrameLevel((auctionHouse:GetFrameLevel() or 1) + 10)
+        self.ahButton:SetPoint("TOPLEFT", auctionHouse, "TOPLEFT", 18, -4)
+        self.ahButton:SetFrameStrata("DIALOG")
+        self.ahButton:SetFrameLevel(math.max((auctionHouse:GetFrameLevel() or 1) + 100, 100))
     else
         self.ahButton:SetPoint("TOP", UIParent, "TOP", 0, -90)
-        self.ahButton:SetFrameStrata("HIGH")
+        self.ahButton:SetFrameStrata("DIALOG")
+        self.ahButton:SetFrameLevel(100)
     end
     self.ahButton:Show()
     if auctionHouse then self:ShowAHRecipeTab(auctionHouse) end
@@ -1623,8 +1630,12 @@ end
 
 function AHT.UI:ShowAHRecipeTab(auctionHouse)
     if not auctionHouse then return end
+    if not self.ahCraftRecipe then
+        if self.ahRecipeTab then self.ahRecipeTab:Hide() end
+        return
+    end
     if not self.ahRecipeTab then
-        self.ahRecipeTab = Button(auctionHouse, "WOW4E_AH_Trader_RecipeTab", "AHT Rezept", 106, 24)
+        self.ahRecipeTab = Button(UIParent, "WOW4E_AH_Trader_RecipeTab", "AHT Rezept", 106, 24)
         self.ahRecipeTab:SetScript("OnClick", function()
             if self.ahRecipePanel and self.ahRecipePanel:IsShown() then
                 self.ahRecipePanel:Hide()
@@ -1635,12 +1646,12 @@ function AHT.UI:ShowAHRecipeTab(auctionHouse)
             end
         end)
     else
-        self.ahRecipeTab:SetParent(auctionHouse)
+        self.ahRecipeTab:SetParent(UIParent)
     end
     self.ahRecipeTab:ClearAllPoints()
-    self.ahRecipeTab:SetPoint("TOPLEFT", auctionHouse, "TOPLEFT", 194, -50)
-    self.ahRecipeTab:SetFrameStrata(auctionHouse:GetFrameStrata() or "HIGH")
-    self.ahRecipeTab:SetFrameLevel((auctionHouse:GetFrameLevel() or 1) + 10)
+    self.ahRecipeTab:SetPoint("TOPLEFT", auctionHouse, "TOPLEFT", 194, -4)
+    self.ahRecipeTab:SetFrameStrata("DIALOG")
+    self.ahRecipeTab:SetFrameLevel(math.max((auctionHouse:GetFrameLevel() or 1) + 101, 101))
     self.ahRecipeTab:Show()
 end
 
@@ -1653,6 +1664,10 @@ function AHT.UI:HideAHButton()
     if self.ahButton then self.ahButton:Hide() end
     if self.ahRecipeTab then self.ahRecipeTab:Hide() end
     self:HideAHRecipePanel()
+    self.ahCraftRecipe = nil
+    self.ahCraftOutput = nil
+    self.ahCraftMaterials = nil
+    self.ahCraftEntries = nil
 end
 
 function AHT.UI:ShowRecipeActions(result)
