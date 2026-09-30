@@ -348,7 +348,7 @@ function AHT.UI:CycleOpportunityMinimum()
     self:Refresh(true)
 end
 
-function AHT.UI:ShowDatabaseRecovery()
+function AHT.UI:ShowDatabaseRecovery(retryAttempted)
     if not self.databaseRecovery then
         local template = BackdropTemplateMixin and "BackdropTemplate" or nil
         local dialog = CreateFrame("Frame", nil, UIParent, template)
@@ -372,14 +372,14 @@ function AHT.UI:ShowDatabaseRecovery()
         if dialog.message.SetWordWrap then dialog.message:SetWordWrap(true) end
         dialog.message:SetTextColor(0.9, 0.86, 0.75)
 
-        dialog.retry = Button(dialog, nil, "Erneut laden", 118, 26)
+        dialog.retry = Button(dialog, nil, "Erneut prüfen", 118, 26)
         dialog.retry:SetPoint("BOTTOMLEFT", 16, 14)
         dialog.retry:SetScript("OnClick", function()
             if AHT:Initialize() then
                 self:HideDatabaseRecovery()
                 self:Show()
             else
-                self:ShowDatabaseRecovery()
+                self:ShowDatabaseRecovery(true)
             end
         end)
         dialog.newDatabase = Button(dialog, nil, "Neue Datenbank", 132, 26)
@@ -390,14 +390,22 @@ function AHT.UI:ShowDatabaseRecovery()
 
     local missing = type(WOW4E_AHT_DB) ~= "table"
     local canCreate = missing and not (AHT.Store and AHT.Store.canonicalDB) and type(AHT.DB) ~= "table"
+    local title = "WoW4E AH Trader – Daten nicht geladen"
     local message
-    if canCreate then
-        message = "Die SavedVariables-Datenbank ist nicht verfügbar. Wenn du bereits Daten hattest: Lege keine neue Datenbank an. Prüfe nach beendetem Spiel die Sicherung; beim nächsten Login kannst du erneut laden."
+    if retryAttempted and missing then
+        title = "SavedVariables weiterhin nicht geladen"
+        message = "Erneut geprüft: WoW hat die SavedVariables-Tabelle weiterhin nicht geladen. Ein Addon kann die Datei nicht während des laufenden Spiels nachladen. Beende WoW vollständig und prüfe danach die Addon-Datei sowie ihre .bak-Sicherung."
+    elseif retryAttempted then
+        title = "Datenbank weiterhin nicht verfügbar"
+        message = "Die Datenbankprüfung ist erneut fehlgeschlagen. Es wurde nichts überschrieben. Beende WoW vollständig und prüfe die SavedVariables-Datei und ihre .bak-Sicherung, bevor du eine neue Datenbank anlegst."
+    elseif canCreate then
+        message = "Die SavedVariables-Datenbank ist nicht verfügbar. „Erneut prüfen“ prüft nur den aktuellen Spielspeicher; WoW lädt die Datei nur beim Start. Wenn du bereits Daten hattest, lege keine neue Datenbank an. Prüfe nach beendetem Spiel die Datei und ihre .bak-Sicherung."
     elseif missing then
-        message = "Die globale SavedVariables-Referenz fehlt, aber AHT hält die zuvor geladene Tabelle noch im Speicher. Lade erneut, damit diese Referenz wiederhergestellt wird."
+        message = "Die globale SavedVariables-Referenz fehlt, aber AHT hält die zuvor geladene Tabelle noch im Speicher. Erneut prüfen versucht, diese Referenz wiederherzustellen."
     else
-        message = "Die gespeicherten Daten konnten nicht geladen werden. Bitte zuerst erneut laden. Eine neue Datenbank wird nur angeboten, wenn keine SavedVariables-Tabelle vorhanden ist."
+        message = "Die gespeicherten Daten konnten nicht geladen werden. Bitte erneut prüfen. Eine neue Datenbank wird nur angeboten, wenn keine SavedVariables-Tabelle vorhanden ist."
     end
+    self.databaseRecovery.title:SetText(title)
     self.databaseRecovery.message:SetText(message)
     if canCreate then self.databaseRecovery.newDatabase:Show() else self.databaseRecovery.newDatabase:Hide() end
     self.databaseRecovery:Show()
