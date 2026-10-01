@@ -1,1 +1,5 @@
 *.ps1
+!WOW4E_AH_Trader/Tests/SourceAudit.ps1
+.venv-aht-tests/
+__pycache__/
+*.pyc

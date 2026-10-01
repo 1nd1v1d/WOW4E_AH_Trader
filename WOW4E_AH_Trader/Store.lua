@@ -3,7 +3,11 @@ local AHT = WOW4E_AHT
 AHT.Store = { canonicalDB = nil }
 
 local DEFAULT_DB = {
-    schemaVersion = 4,
+    schemaVersion = 5,
+    marketPools = {},
+    shoppingLists = {},
+    recentSearches = {},
+    postingHistory = {},
     market = {},
     byItemID = {},
     history = {},
@@ -39,6 +43,8 @@ local DEFAULT_DB = {
         professionFilter = "all",
         opportunityDirection = "all",
         minimumOpportunityPercent = 0,
+        views = {},
+        windows = {},
     },
     settings = {
         minMarginPercent = 10,
@@ -56,6 +62,14 @@ local DEFAULT_DB = {
         averageHalfLifeSeconds = 604800,
         -- Modern C_AuctionHouse APIs expect 1/2/3, not hours.
         defaultDuration = 2,
+        budgetCopper = 0,
+        minimumProfitCopper = 1,
+        maxPriceAgeSeconds = 86400,
+        sellStrategy = "match",
+        sellFloorCopper = 0,
+        undercutCopper = 1,
+        useAuctionator = false,
+        detailedCandidateLimit = 50,
     },
 }
 
@@ -80,14 +94,35 @@ function AHT.Store:Load()
         return nil, "saved_variables_missing"
     end
     if not self.canonicalDB then self.canonicalDB = WOW4E_AHT_DB end
+    local oldSchema = tonumber(WOW4E_AHT_DB.schemaVersion) or 0
     local tableKeys = {
         "market", "byItemID", "history", "dailyHistory", "recipes", "recipeIndex", "professions", "materials",
         "inventory", "production", "scan", "ui", "settings",
     }
     for _, key in ipairs(tableKeys) do
+        if type(WOW4E_AHT_DB[key]) ~= "table" then
+            if WOW4E_AHT_DB[key] ~= nil then
+                WOW4E_AHT_DB.recoveryValues = WOW4E_AHT_DB.recoveryValues or {}
+                WOW4E_AHT_DB.recoveryValues[key] = WOW4E_AHT_DB[key]
+            end
+            WOW4E_AHT_DB[key] = {}
+        end
+    end
+    for _, key in ipairs({ "marketPools", "shoppingLists", "recentSearches", "postingHistory" }) do
         if type(WOW4E_AHT_DB[key]) ~= "table" then WOW4E_AHT_DB[key] = {} end
     end
+    for _, pair in ipairs({ { "ui", "views" }, { "ui", "windows" }, { "production", "orders" }, { "production", "purchases" }, { "inventory", "characters" } }) do
+        if type(WOW4E_AHT_DB[pair[1]][pair[2]]) ~= "table" then WOW4E_AHT_DB[pair[1]][pair[2]] = {} end
+    end
     CopyDefaults(WOW4E_AHT_DB, DEFAULT_DB)
+    if oldSchema < 5 then
+        local ui = WOW4E_AHT_DB.ui
+        local view = ui.viewMode == "transmute" and "recipes" or ui.viewMode
+        ui.views[view] = ui.views[view] or { sortColumn = ui.sortColumn, sortAscending = ui.sortAscending,
+            marketFilter = ui.marketFilter, professionFilter = ui.professionFilter ~= "all" and ui.professionFilter or nil,
+            opportunityDirection = ui.opportunityDirection, minimumOpportunityPercent = ui.minimumOpportunityPercent,
+            showTransmutes = ui.viewMode == "transmute" }
+    end
     -- Older beta builds kept only 20 snapshots. Move that implicit default
     -- to the larger history window so the weighted average can use more scans.
     if tonumber(WOW4E_AHT_DB.settings.historyLimit) == 20 then
@@ -107,8 +142,14 @@ function AHT.Store:Load()
     end
     local minimum = tonumber(WOW4E_AHT_DB.ui.minimumOpportunityPercent) or 0
     WOW4E_AHT_DB.ui.minimumOpportunityPercent = math.max(0, math.min(100, minimum))
-    WOW4E_AHT_DB.schemaVersion = 4
     AHT.DB = self.canonicalDB
+    self:SelectMarketPool()
+    local activeScan = AHT.DB.scan
+    if activeScan.status == "running" then
+        activeScan.status = (tonumber(activeScan.itemCount) or 0) > 0 and "partial" or "aborted"
+        activeScan.finishedAt, activeScan.reason = AHT:Now(), "client_restarted_during_scan"
+    end
+    WOW4E_AHT_DB.schemaVersion = 5
     self:RebuildIndexes()
     return AHT.DB
 end
@@ -126,7 +167,49 @@ function AHT.Store:Save()
     if AHT.DB ~= self.canonicalDB or WOW4E_AHT_DB ~= self.canonicalDB then return false, "database_reference_mismatch" end
     -- WoW serializes SavedVariables on reload/logout. Keep the table loaded at
     -- login canonical so an accidental empty replacement cannot be serialized.
+    local pool = AHT.DB.marketPools and AHT.DB.marketPools[AHT.DB.marketPoolKey]
+    if pool then
+        for _, field in ipairs({ "market", "byItemID", "history", "dailyHistory", "scan" }) do pool[field] = AHT.DB[field] end
+        pool.lastCompletedMarketScanAt = AHT.DB.lastCompletedMarketScanAt
+    end
     return true
+end
+
+function AHT.Store:SelectMarketPool()
+    local db = AHT.DB
+    db.marketPools = type(db.marketPools) == "table" and db.marketPools or {}
+    local realm = GetNormalizedRealmName and GetNormalizedRealmName() or (GetRealmName and GetRealmName())
+    if not realm or realm == "" then realm = "unknown" end
+    local realms = { realm }
+    if GetAutoCompleteRealms then
+        local ok, connections = pcall(GetAutoCompleteRealms)
+        if ok and type(connections) == "table" and #connections > 0 then
+            realms = {}
+            for _, name in ipairs(connections) do table.insert(realms, name) end
+        end
+    end
+    for i, name in ipairs(realms) do realms[i] = tostring(name):gsub("[%s%-]", "") end
+    table.sort(realms)
+    local region = GetCurrentRegion and GetCurrentRegion() or "unknown"
+    local key = "forever:" .. tostring(region) .. ":" .. table.concat(realms, "+")
+    local pool = db.marketPools[key]
+    if pool ~= nil and type(pool) ~= "table" then
+        db.recoveryValues = type(db.recoveryValues) == "table" and db.recoveryValues or {}
+        db.recoveryValues["marketPool:" .. key] = pool
+        pool = nil
+    end
+    if not pool then
+        pool = { origin = db.marketPoolKey and "realm" or "legacy_origin_unknown" }
+        for _, field in ipairs({ "market", "byItemID", "history", "dailyHistory", "scan" }) do pool[field] = (not db.marketPoolKey or db.marketPoolKey == key) and db[field] or {} end
+        if not db.marketPoolKey or db.marketPoolKey == key then pool.lastCompletedMarketScanAt = db.lastCompletedMarketScanAt end
+        db.marketPools[key] = pool
+    end
+    db.marketPoolKey = key
+    db.lastCompletedMarketScanAt = pool.lastCompletedMarketScanAt
+    for _, field in ipairs({ "market", "byItemID", "history", "dailyHistory", "scan" }) do
+        pool[field] = type(pool[field]) == "table" and pool[field] or {}
+        db[field] = pool[field]
+    end
 end
 
 function AHT.Store:EnsureLoaded()
@@ -204,7 +287,9 @@ function AHT.Store:GetPrice(itemID, itemKey)
     local record = self:Get(itemID, itemKey)
     if record and record.minPrice then return record.minPrice end
     local fallback = self:GetByItemID(itemID)
-    return fallback and fallback.minPrice or nil
+    if fallback then return fallback.minPrice end
+    local external = AHT.Commerce and AHT.Commerce:ExternalPrice(itemID)
+    return external and external.currentPrice or nil
 end
 
 local function Percentile(values, fraction)
@@ -248,21 +333,27 @@ function AHT.Store:RecordMarket(target, result)
     if not key then return nil end
     local now = AHT:Now()
     local record = AHT.DB.market[key] or {}
+    if result.operationID and record.lastOperationID == result.operationID then return record end
+    record.lastOperationID = result.operationID
     record.key = key
     record.itemID = target.itemID
     record.itemKey = target.itemKey or record.itemKey
     record.name = target.name or record.name or (AHT:GetItemInfo(target.itemID))
     record.kind = result.kind or target.kind or record.kind or "unknown"
     record.minPrice = result.minPrice
-    record.totalQuantity = result.totalQuantity or 0
-    record.listingCount = result.listingCount or 0
-    local stats = result.stats or self:CalculatePriceStats(result.prices)
+    record.totalQuantity = tonumber(result.totalQuantity)
+    record.source = result.source or "detailed"
+    record.listingCount = tonumber(result.listingCount)
+    if record.source == "browse" then record.listingCount = nil end
+    local stats = record.source ~= "browse" and (result.stats or self:CalculatePriceStats(result.prices)) or nil
     if stats then
         record.p25 = stats.p25
         record.medianPrice = stats.median
         record.p75 = stats.p75
         record.marketValue = stats.trimmedMean or stats.median
         record.priceSampleCount = stats.sampleCount
+        record.distributionAt = now
+        record.priceDepth = result.depth
     elseif result.minPrice and result.minPrice > 0 then
         record.marketValue = record.marketValue or result.minPrice
     end
@@ -277,8 +368,9 @@ function AHT.Store:RecordMarket(target, result)
             t = now,
             p = result.minPrice,
             q = result.totalQuantity or 0,
-            m = record.marketValue,
-            s = record.priceSampleCount or result.listingCount or 0,
+            m = stats and (stats.trimmedMean or stats.median) or result.minPrice,
+            source = record.source,
+            s = stats and stats.sampleCount or 0,
         })
         local limit = tonumber(AHT.DB.settings.historyLimit) or 20
         while #history > limit do table.remove(history, 1) end
@@ -290,13 +382,13 @@ function AHT.Store:RecordMarket(target, result)
         for _, entry in ipairs(daily) do
             if tonumber(entry.d) == day then dayRecord = entry break end
         end
-        local dayPrice = tonumber(record.medianPrice or record.marketValue or result.minPrice)
+        local dayPrice = tonumber(stats and (stats.median or stats.trimmedMean) or result.minPrice)
         if dayPrice and dayPrice > 0 then
             if dayRecord then
                 local scans = tonumber(dayRecord.n) or 0
                 dayRecord.p = math.floor(((tonumber(dayRecord.p) or dayPrice) * scans + dayPrice) / (scans + 1) + 0.5)
                 dayRecord.q = math.max(tonumber(dayRecord.q) or 0, tonumber(result.totalQuantity) or 0)
-                dayRecord.s = math.max(tonumber(dayRecord.s) or 0, tonumber(record.priceSampleCount) or 0)
+                dayRecord.s = math.max(tonumber(dayRecord.s) or 0, stats and stats.sampleCount or 0)
                 dayRecord.n = scans + 1
                 dayRecord.t = now
             else
@@ -305,7 +397,7 @@ function AHT.Store:RecordMarket(target, result)
                     t = now,
                     p = dayPrice,
                     q = result.totalQuantity or 0,
-                    s = record.priceSampleCount or result.listingCount or 0,
+                    s = stats and stats.sampleCount or 0,
                     n = 1,
                 })
             end
@@ -433,7 +525,7 @@ end
 function AHT.Store:GetMarketSnapshot(itemID, itemKey)
     local record, key = self:Get(itemID, itemKey)
     if not record and itemID then record, key = self:GetByItemID(itemID) end
-    if not record then return nil end
+    if not record then return AHT.Commerce and AHT.Commerce:ExternalPrice(itemID) or nil end
     local marketValue, marketSamples = self:RobustMarketValue(itemID, itemKey)
     local averagePrice, scanSamples = self:RecencyAverage(itemID, itemKey)
     local currentPrice = tonumber(record.minPrice)
@@ -458,7 +550,10 @@ function AHT.Store:GetMarketSnapshot(itemID, itemKey)
         priceChangePercent = priceChangePercent,
         previousPrice = previousPrice,
         totalQuantity = tonumber(record.totalQuantity) or 0,
-        listingCount = tonumber(record.listingCount) or 0,
+        listingCount = tonumber(record.listingCount),
+        source = record.source or "legacy",
+        distributionAt = record.distributionAt,
+        distributionAge = record.distributionAt and math.max(0, AHT:Now() - record.distributionAt),
         marketSamples = marketSamples or 0,
         scanSamples = scanSamples or 0,
         priceSampleCount = tonumber(record.priceSampleCount) or 0,

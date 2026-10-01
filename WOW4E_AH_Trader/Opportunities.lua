@@ -13,9 +13,13 @@ local function VendorSellPrice(itemID)
 end
 
 local function Confidence(snapshot)
-    local days = math.max(tonumber(snapshot.marketSamples) or 0, tonumber(snapshot.scanSamples) or 0)
+    local days = tonumber(snapshot.marketSamples) or 0
     local listings = tonumber(snapshot.priceSampleCount) or 0
-    return math.min(100, days * 20 + math.min(listings, 20) * 2)
+    local age = math.max(0, AHT:Now() - (tonumber(snapshot.updatedAt) or 0))
+    local distributionFresh = (tonumber(snapshot.distributionAge) or math.huge) <= 86400
+    local spread = snapshot.p25 and snapshot.p75 and snapshot.p25 > 0 and snapshot.p75 / snapshot.p25 or 1
+    return math.floor(math.min(100, days * 15 + (distributionFresh and math.min(listings, 20) * 2 or 0))
+        * 2 ^ (-age / 86400) / math.max(1, spread))
 end
 
 function AHT.Opportunities:Build()
@@ -26,7 +30,8 @@ function AHT.Opportunities:Build()
 
     local settings = db.settings or {}
     local cut = (tonumber(settings.auctionCutPercent) or 5) / 100
-    local threshold = (tonumber(settings.dealThresholdPercent) or 20) / 100
+    local threshold = tonumber(settings.dealThresholdPercent) or 20
+    local minimumProfit = math.max(1, tonumber(settings.minimumProfitCopper) or 1)
     local minimumSamples = tonumber(settings.minMarketSamples) or 2
 
     local craftCosts = {}
@@ -44,11 +49,13 @@ function AHT.Opportunities:Build()
         local snapshot = itemID and store:GetMarketSnapshot(itemID, record.itemKey)
         local current = snapshot and snapshot.currentPrice
         local market = snapshot and snapshot.marketValue
-        local confidenceSamples = snapshot and math.max(snapshot.marketSamples or 0, snapshot.scanSamples or 0) or 0
+        local confidenceSamples = snapshot and (snapshot.marketSamples or 0) or 0
+        local fresh = snapshot and snapshot.updatedAt and AHT:Now() - snapshot.updatedAt <= (tonumber(settings.maxPriceAgeSeconds) or 86400)
+        local buyAdded = false
 
         -- Buy chance: the latest AH listing is below the robust, history-based
         -- reference value. This remains conservative and requires confidence.
-        if current and market and market > 0 and confidenceSamples >= minimumSamples then
+        if fresh and current and market and market > 0 and confidenceSamples >= minimumSamples then
             local discount = (1 - current / market) * 100
             if discount >= threshold then
                 local ahNet = math.floor(market * (1 - cut))
@@ -60,7 +67,7 @@ function AHT.Opportunities:Build()
                     bestValue, bestMethod = vendor, "NPC"
                 end
                 local profit = bestValue - current
-                table.insert(rows, {
+                if profit >= minimumProfit then buyAdded = true; table.insert(rows, {
                     kind = "opportunity",
                     side = "buy",
                     opportunityType = "Kaufchance",
@@ -77,15 +84,31 @@ function AHT.Opportunities:Build()
                     ahProfit = ahProfit,
                     vendorProfit = vendorProfit,
                     roi = current > 0 and (profit / current * 100) or 0,
-                    quantity = snapshot.totalQuantity,
+                    quantity = nil,
+                    availableSupply = snapshot.totalQuantity,
                     listingCount = snapshot.listingCount,
                     confidence = Confidence(snapshot),
                     bestMethod = bestMethod,
                     p25 = snapshot.p25,
                     p75 = snapshot.p75,
                     updatedAt = snapshot.updatedAt,
-                })
+                    source = snapshot.source,
+                    marketSamples = confidenceSamples,
+                }) end
             end
+        end
+
+        -- NPC liquidation is a known payout, not a speculative AH resale.
+        local npcValue = fresh and current and VendorSellPrice(itemID)
+        if not buyAdded and npcValue and npcValue - current >= minimumProfit
+                and (npcValue - current) / current * 100 >= (tonumber(settings.minMarginPercent) or 10) then
+            table.insert(rows, { kind = "opportunity", side = "buy", opportunityType = "NPC-Kaufchance",
+                name = record.name or tostring(itemID), itemID = itemID, itemKey = record.itemKey,
+                currentPrice = current, marketValue = market, profit = npcValue - current,
+                vendorProfit = npcValue - current, roi = (npcValue - current) / current * 100,
+                discount = (1 - current / npcValue) * 100, bestMethod = "NPC", confidence = Confidence(snapshot),
+                availableSupply = snapshot.totalQuantity, listingCount = snapshot.listingCount,
+                updatedAt = snapshot.updatedAt, source = snapshot.source, marketSamples = confidenceSamples })
         end
 
         -- Sell chance: only items actually owned by the character are shown.
@@ -93,17 +116,16 @@ function AHT.Opportunities:Build()
         -- market value, above the craft cost, or clearly above vendor value.
         local stock = AHT.Inventory and AHT.Inventory:GetCount(itemID) or { total = 0 }
         local owned = tonumber(stock and stock.total) or 0
-        if current and current > 0 and owned > 0 then
+        if fresh and current and current > 0 and owned > 0 then
             local vendor = VendorSellPrice(itemID)
             local craft = craftCosts[itemID]
-            local costBasis = craft and craft.cost or vendor
+            local costBasis = craft and craft.cost or nil
             local sellNet = math.floor(current * (1 - cut))
             local sellProfit = costBasis and (sellNet - costBasis) or nil
             local premium = market and market > 0 and (current / market - 1) * 100 or nil
-            local aboveMarket = premium and confidenceSamples >= minimumSamples and premium >= threshold * 100
-            local craftProfitable = sellProfit and craft and sellProfit >= craft.cost * threshold
-            local vendorProfitable = sellProfit and vendor and sellProfit >= vendor * threshold
-            if aboveMarket or craftProfitable or vendorProfitable then
+            local aboveMarket = premium and confidenceSamples >= minimumSamples and premium >= threshold
+            local craftProfitable = sellProfit and craft and sellProfit >= minimumProfit and sellProfit >= craft.cost * threshold / 100
+            if aboveMarket or craftProfitable then
                 table.insert(rows, {
                     kind = "opportunity",
                     side = "sell",
@@ -119,7 +141,8 @@ function AHT.Opportunities:Build()
                     discount = premium or 0,
                     profit = sellProfit,
                     ahProfit = sellProfit,
-                    vendorProfit = vendor and (vendor - (costBasis or 0)) or nil,
+                    vendorIncome = vendor,
+                    netIncome = sellNet,
                     roi = costBasis and costBasis > 0 and ((sellNet - costBasis) / costBasis * 100) or 0,
                     quantity = owned,
                     stockBags = stock.bags or 0,
@@ -131,6 +154,8 @@ function AHT.Opportunities:Build()
                     p25 = snapshot and snapshot.p25,
                     p75 = snapshot and snapshot.p75,
                     updatedAt = snapshot and snapshot.updatedAt,
+                    source = snapshot.source,
+                    marketSamples = confidenceSamples,
                     costBasis = costBasis,
                     craftCost = craft and craft.cost,
                     recipe = craft and craft.result,

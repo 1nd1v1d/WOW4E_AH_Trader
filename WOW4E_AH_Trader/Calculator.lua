@@ -36,6 +36,7 @@ function AHT.Calculator:CalculateRecipe(recipe)
     -- the current market. The robust value is a comparison/orientation and
     -- remains available separately for the UI and opportunity analysis.
     result.expectedSalePrice = result.currentSalePrice or result.marketSalePrice
+    result.saleEstimateOnly = result.currentSalePrice == nil
     local complete = true
 
     for _, reagent in ipairs(recipe.reagents or {}) do
@@ -53,7 +54,7 @@ function AHT.Calculator:CalculateRecipe(recipe)
 
     local outputQuantity = recipe.output.quantity or 1
     result.costPerOutput = result.ingredientCost / outputQuantity
-    result.complete = complete and result.expectedSalePrice ~= nil and result.ingredientCost > 0
+    result.complete = complete and result.currentSalePrice ~= nil and result.ingredientCost > 0
     if result.salePrice then
         local record = AHT.Store:GetByItemID(recipe.output.itemID)
         result.listingCount = record and record.listingCount or 0
@@ -73,6 +74,7 @@ function AHT.Calculator:CalculateRecipe(recipe)
         result.auctionCut = cut
         result.deposit = deposit
         result.profit = gross - cut - deposit - result.ingredientCost
+        result.profitPerOutput = result.profit / outputQuantity
         result.margin = result.profit / result.ingredientCost * 100
         result.isDeal = AHT.Store:IsDeal(AHT.Store:MarketKey(recipe.output.itemID), result.currentSalePrice)
     else

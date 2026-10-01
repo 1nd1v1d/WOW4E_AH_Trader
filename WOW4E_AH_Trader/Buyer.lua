@@ -20,8 +20,10 @@ function AHT.Buyer:BuildPlan(results, quantity, maxUnitPrice)
                 -- Item auctions cannot be split at purchase time; buy the whole stack only.
                 take = offer.quantity
             end
-            table.insert(plan.lines, { offer = offer, quantity = take, total = take * offer.unitPrice })
-            plan.total = plan.total + take * offer.unitPrice
+            local lineTotal = offer.kind == "item" and tonumber(offer.buyoutAmount) or take * offer.unitPrice
+            lineTotal = lineTotal or take * offer.unitPrice
+            table.insert(plan.lines, { offer = offer, quantity = take, total = lineTotal })
+            plan.total = plan.total + lineTotal
             plan.plannedQuantity = plan.plannedQuantity + take
             plan.missing = math.max(0, plan.missing - take)
         end
@@ -75,6 +77,7 @@ function AHT.Buyer:Confirm(plan, callback)
         AHT:Print(AHT.L.noAH)
         return false
     end
+    if AHT.Scanner and (AHT.Scanner.running or AHT.Scanner.marketDiscovery or AHT.Scanner.replication) then return false end
     self.pending = {
         plan = plan,
         state = "refreshing",
@@ -101,6 +104,12 @@ function AHT.Buyer:Confirm(plan, callback)
         refreshed.results = results
         refreshed.maxUnitPrice = maxUnitPrice
         refreshed.requirementItemID = plan.requirementItemID
+        refreshed.validate = plan.validate
+        refreshed.ownerTag = plan.ownerTag
+        if refreshed.validate then
+            local allowed, reason = refreshed.validate(refreshed)
+            if not allowed then self:Finish("error", reason) return end
+        end
         self.pending.plan = refreshed
         -- The live search finishes asynchronously. Protected auction-house
         -- purchase APIs must be called by a later direct button click.
@@ -127,6 +136,10 @@ function AHT.Buyer:StartPendingPurchase()
 end
 
 function AHT.Buyer:Execute(plan)
+    if plan.validate then
+        local allowed, reason = plan.validate(plan)
+        if not allowed then self:Finish("error", reason) return end
+    end
     local first = plan.lines[1] and plan.lines[1].offer
     if not first then
         self:Finish("error", "offer_missing")
@@ -150,7 +163,7 @@ function AHT.Buyer:Execute(plan)
             return false
         end
         local ok, err = pcall(C_AuctionHouse.StartCommoditiesPurchase, first.itemID, quantity)
-        if not ok then
+        if not ok or err == false then
             AHT:Print("Commodity-Kauf fehlgeschlagen: " .. tostring(err))
             self:Finish("error", tostring(err or "commodity_purchase_failed"))
             return false
@@ -168,7 +181,7 @@ function AHT.Buyer:Execute(plan)
         self.pending.totalPrice = totalPrice
         self.pending.auctionID = first.auctionID
         local ok, err = pcall(C_AuctionHouse.PlaceBid, first.auctionID, totalPrice)
-        if not ok then
+        if not ok or err == false then
             AHT:Print("Item-Kauf fehlgeschlagen: " .. tostring(err))
             self:Finish("error", tostring(err or "item_purchase_failed"))
             return false
@@ -184,12 +197,16 @@ end
 function AHT.Buyer:ConfirmCommodity()
     local pending = self.pending
     if not pending or pending.state ~= "awaiting_user_confirmation" then return false end
+    if pending.plan.validate then
+        local allowed, reason = pending.plan.validate(pending.plan, pending.totalPrice)
+        if not allowed then self:Cancel(reason) return false end
+    end
     if not C_AuctionHouse or not C_AuctionHouse.ConfirmCommoditiesPurchase then
         self:Finish("error", "commodity_confirm_api_missing")
         return false
     end
     local ok, err = pcall(C_AuctionHouse.ConfirmCommoditiesPurchase, pending.itemID, pending.quantity)
-    if not ok then
+    if not ok or err == false then
         AHT:Print("Commodity-Bestätigung fehlgeschlagen: " .. tostring(err))
         self:Finish("error", tostring(err or "commodity_confirm_failed"))
         return false
@@ -230,7 +247,8 @@ function AHT.Buyer:OnEvent(eventName, ...)
     elseif eventName == "COMMODITY_PURCHASE_FAILED" or eventName == "AUCTION_HOUSE_PURCHASE_FAILED" then
         AHT:Print("Kauf vom Client abgelehnt.")
         self:Finish("error", "purchase_failed")
-    elseif eventName == "COMMODITY_PURCHASE_SUCCEEDED" or eventName == "AUCTION_HOUSE_PURCHASE_COMPLETED" then
+    elseif (eventName == "COMMODITY_PURCHASE_SUCCEEDED" or eventName == "AUCTION_HOUSE_PURCHASE_COMPLETED")
+            and self.pending.state == "awaiting_completion" then
         AHT:Print("Kauf abgeschlossen.")
         local pending = self.pending
         local completed = pending.plan

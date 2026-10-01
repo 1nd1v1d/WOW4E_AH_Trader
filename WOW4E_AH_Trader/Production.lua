@@ -35,7 +35,7 @@ function AHT.Production:Initialize()
     AHT.DB.production.orders = AHT.DB.production.orders or {}
     AHT.DB.production.purchases = AHT.DB.production.purchases or {}
     for _, order in pairs(AHT.DB.production.orders) do
-        if order.status == "buying" or order.status == "checking" or
+        if order.status == "previewing" or order.status == "buying" or order.status == "checking" or
                 order.status == "awaiting_purchase" or order.status == "awaiting_confirmation" or order.status == "submitted" then
             order.status = "paused"
         end
@@ -99,14 +99,99 @@ function AHT.Production:Suggest(result)
     local minimumMargin = tonumber(AHT.DB and AHT.DB.settings.minMarginPercent) or 10
     if not result.margin or result.margin < minimumMargin then return suggestion end
 
-    local record = AHT.Store and AHT.Store:GetByItemID(result.output.itemID)
-    local currentSupply = record and tonumber(record.totalQuantity) or 0
-    local outputQuantity = math.max(1, tonumber(result.output.quantity) or 1)
-    local share = tonumber(AHT.DB.settings.productionSuggestionShare) or 0.10
     local cap = math.max(1, tonumber(AHT.DB.settings.productionSuggestionCap) or 20)
-    local suggestedOutputs = currentSupply > 0 and math.max(outputQuantity, math.ceil(currentSupply * share)) or outputQuantity
-    suggestion.suggestedCrafts = math.max(1, math.min(cap, math.ceil(suggestedOutputs / outputQuantity)))
+    local budget = tonumber(AHT.DB.settings.budgetCopper) or 0
+    if budget <= 0 then budget = GetMoney and GetMoney() or math.huge end
+    for crafts = 1, cap do
+        local cost, cash, complete = 0, 0, true
+        for _, reagent in pairs(perItem) do
+            local needed = reagent.quantity * crafts
+            local counts = AHT.Inventory:GetCount(reagent.itemID)
+            local available = math.max(0, counts.total - self:GetReserved(reagent.itemID))
+            local allocated = math.min(needed, available)
+            local record = AHT.Store:GetByItemID(reagent.itemID)
+            local unit = AHT.Store:GetPrice(reagent.itemID)
+            cost = cost + allocated * (unit or 0)
+            if not unit then complete = false end
+            if needed > allocated then
+                if not record or not record.priceDepth or not record.distributionAt or AHT:Now() - record.distributionAt > (AHT.DB.settings.maxPriceAgeSeconds or 86400) then
+                    complete = false
+                else
+                    local plan = AHT.Buyer:BuildPlan(record.priceDepth, needed - allocated, unit * (1 + (AHT.DB.settings.productionPriceSlippagePercent or 25) / 100))
+                    cost, cash = cost + plan.total, cash + plan.total
+                    if plan.missing > 0 then complete = false end
+                end
+            end
+        end
+        local net = (result.salePrice or 0) * math.max(1, result.output.quantity or 1) * crafts * (1 - (AHT.DB.settings.auctionCutPercent or 5) / 100)
+        if not complete or cost <= 0 or (net - cost) / cost * 100 < minimumMargin or cash > budget then break end
+        suggestion.suggestedCrafts = crafts
+    end
     return suggestion
+end
+
+function AHT.Production:CreateOrderForOutputs(result, outputs)
+    local perCraft = math.max(1, tonumber(result.output.quantity) or 1)
+    local order, reason = self:CreateOrder(result, math.ceil(math.max(1, tonumber(outputs) or 1) / perCraft))
+    if order then order.targetOutputs = math.max(1, math.floor(tonumber(outputs) or 1)) end
+    return order, reason
+end
+
+function AHT.Production:RefreshSuggestion(result, callback)
+    local targets = { result.output }
+    for _, reagent in ipairs(result.reagents or {}) do table.insert(targets, reagent) end
+    local index = 0
+    local function Next()
+        index = index + 1
+        if not targets[index] then
+            local fresh = AHT.Calculator:CalculateRecipe(result)
+            callback(self:Suggest(fresh), nil)
+            return
+        end
+        AHT.AH:Search(targets[index], function(_, meta)
+            if meta.error then callback(nil, meta.error) else Next() end
+        end)
+    end
+    Next()
+end
+
+-- Re-evaluate the WHOLE order after each live price change, including paid
+-- stacks, owned stock at replacement cost and every remaining requirement.
+function AHT.Production:ValidateOrder(order, replacement, replacementTotal)
+    local plans = self.runtimePlans[tostring(order.id)] or {}
+    local economic, spent, remaining, complete = 0, 0, 0, true
+    for _, requirement in ipairs(order.requirements or {}) do
+        local unit = AHT.Store:GetPrice(requirement.itemID)
+        local paid = tonumber(requirement.spent) or 0
+        economic, spent = economic + paid + (requirement.ownedAllocated or 0) * (unit or 0), spent + paid
+        if (requirement.ownedAllocated or 0) > 0 and not unit then complete = false end
+        if Remaining(requirement) > 0 then
+            local plan = replacement and tonumber(replacement.requirementItemID) == tonumber(requirement.itemID) and replacement or plans[tostring(requirement.itemID)]
+            if not plan or plan.missing > 0 then complete = false else
+                local cost = plan == replacement and replacementTotal or plan.total
+                cost = tonumber(cost) or plan.total
+                economic, remaining = economic + cost, remaining + cost
+            end
+        end
+    end
+    local snapshot = AHT.Store:GetMarketSnapshot(order.output.itemID)
+    local sale = snapshot and snapshot.currentPrice
+    local fresh = snapshot and snapshot.updatedAt and AHT:Now() - snapshot.updatedAt <= (AHT.DB.settings.maxPriceAgeSeconds or 86400)
+    local gross = sale and sale * math.max(1, order.output.quantity or 1) * order.crafts
+    local net = gross and gross - math.floor(gross * (AHT.DB.settings.auctionCutPercent or 5) / 100)
+    local profit = net and net - economic
+    local margin = profit and economic > 0 and profit / economic * 100 or nil
+    local budget = tonumber(AHT.DB.settings.budgetCopper) or 0
+    local minimum = tonumber(AHT.DB.settings.minMarginPercent) or 10
+    order.preview = { complete = complete and fresh and sale ~= nil and economic > 0,
+        cashCost = spent + remaining, spent = spent, remainingCost = remaining,
+        economicCost = economic, salePrice = sale, gross = gross, net = net, profit = profit,
+        margin = margin, minimumMargin = minimum, meetsMargin = margin ~= nil and margin >= minimum,
+        meetsBudget = (budget <= 0 or spent + remaining <= budget) and (not GetMoney or remaining <= GetMoney()) }
+    if not order.preview.complete then return false, "preview_required" end
+    if not order.preview.meetsMargin or (profit or 0) < (AHT.DB.settings.minimumProfitCopper or 1) then return false, "margin_below_minimum" end
+    if not order.preview.meetsBudget then return false, "budget_exceeded" end
+    return true
 end
 
 function AHT.Production:CreateOrder(result, crafts)
@@ -220,96 +305,65 @@ function AHT.Production:PreviewOrder(orderOrID, callback)
         return false
     end
     if not AHT.AHOpen then
-        order.status = "paused"
-        order.lastError = "auction_house_closed"
-        order.updatedAt = AHT:Now()
+        order.status, order.lastError = "paused", "auction_house_closed"
         AHT.Store:Save()
         if callback then callback(nil, "auction_house_closed") end
         return false
     end
-
-    order.status = "previewing"
-    order.updatedAt = AHT:Now()
-    local plans = {}
-    self.runtimePlans[tostring(order.id)] = plans
-    local index = 0
-    local complete = true
-    local cashCost = 0
-    local economicCost = 0
+    self.previewTokens = self.previewTokens or {}
+    local id = tostring(order.id)
+    local token = (self.previewTokens[id] or 0) + 1
+    self.previewTokens[id] = token
+    local function Active() return IsActive(order) and self.previewTokens[id] == token end
+    order.status, order.lastError, order.updatedAt = "previewing", nil, AHT:Now()
+    local plans, index, complete = {}, 0, true
+    self.runtimePlans[id] = plans
     local slippage = (tonumber(AHT.DB.settings.productionPriceSlippagePercent) or 25) / 100
-
     local function Finish()
-        if not IsActive(order) then return end
-        local outputQuantity = math.max(1, tonumber(order.output and order.output.quantity) or 1)
-        local salePrice = AHT.Store and AHT.Store:GetPrice(order.output.itemID) or nil
-        local gross = salePrice and salePrice * outputQuantity * order.crafts or nil
-        local cutPercent = tonumber(AHT.DB.settings.auctionCutPercent) or 5
-        local net = gross and gross - math.floor(gross * cutPercent / 100) or nil
-        local profit = net and economicCost > 0 and net - economicCost or nil
-        local margin = profit and economicCost > 0 and profit / economicCost * 100 or nil
-        local minimumMargin = tonumber(AHT.DB.settings.minMarginPercent) or 10
-        order.preview = {
-            complete = complete and salePrice ~= nil and economicCost > 0,
-            cashCost = cashCost,
-            economicCost = economicCost,
-            salePrice = salePrice,
-            gross = gross,
-            net = net,
-            profit = profit,
-            margin = margin,
-            minimumMargin = minimumMargin,
-            meetsMargin = margin ~= nil and margin >= minimumMargin,
-        }
+        if not Active() then return end
+        local allowed, reason = self:ValidateOrder(order)
+        if not complete then order.preview.complete = false end
         order.status = order.preview.complete and "ready" or "incomplete"
+        order.lastError = not allowed and reason or nil
         order.updatedAt = AHT:Now()
         AHT.Store:Save()
         if callback then callback(order, nil) end
     end
-
     local function Next()
-        if not IsActive(order) then return end
+        if not Active() then return end
         index = index + 1
         local requirement = order.requirements[index]
         if not requirement then Finish() return end
-
-        requirement.unitPrice = AHT.Store and AHT.Store:GetPrice(requirement.itemID) or requirement.unitPrice
         local remaining = Remaining(requirement)
-        local ownedValue = (tonumber(requirement.ownedAllocated) or 0) * (tonumber(requirement.unitPrice) or 0)
-        economicCost = economicCost + ownedValue + (tonumber(requirement.spent) or 0)
-        cashCost = cashCost + (tonumber(requirement.spent) or 0)
-        if (requirement.ownedAllocated or 0) > 0 and not requirement.unitPrice then complete = false end
-        if remaining <= 0 then Next() return end
-
-        local marketPrice = tonumber(requirement.unitPrice)
-        local maxUnitPrice = marketPrice and math.max(1, math.floor(marketPrice * (1 + slippage))) or MAX_UNIT_PRICE
+        local reference = AHT.Store:GetPrice(requirement.itemID)
+        local maximum = reference and math.max(1, math.floor(reference * (1 + slippage))) or MAX_UNIT_PRICE
         local target = { itemID = requirement.itemID, name = requirement.name, kind = "unknown" }
+        -- Owned ingredients also need a current replacement-cost reference.
         AHT.AH:Search(target, function(results, meta)
-            if not IsActive(order) then return end
-            if meta.error then
-                requirement.error = meta.error
-                complete = false
-                Next()
-                return
-            end
-            local plan = AHT.Buyer:BuildPlan(results, remaining, maxUnitPrice)
-            plan.target = target
-            plan.results = results
-            plan.maxUnitPrice = maxUnitPrice
-            plan.requirementItemID = requirement.itemID
-            plan.plannedQuantity = PlannedQuantity(plan)
-            plans[tostring(requirement.itemID)] = plan
-            requirement.previewQuantity = plan.plannedQuantity
-            requirement.previewCost = plan.total
-            requirement.maxUnitPrice = plan.maxUnitPrice
-            requirement.error = plan.missing > 0 and "quantity_or_price_missing" or nil
-            if plan.missing > 0 or plan.plannedQuantity <= 0 then complete = false end
-            cashCost = cashCost + plan.total
-            economicCost = economicCost + plan.total
+            if not Active() then return end
+            if meta.error then requirement.error = meta.error; complete = false; Next(); return end
+            requirement.unitPrice = AHT.Store:GetPrice(requirement.itemID)
+            if remaining > 0 then
+                local plan = AHT.Buyer:BuildPlan(results, remaining, maximum)
+                plan.target, plan.results, plan.maxUnitPrice = target, results, maximum
+                plan.requirementItemID = requirement.itemID
+                plan.plannedQuantity = PlannedQuantity(plan)
+                plans[tostring(requirement.itemID)] = plan
+                requirement.previewQuantity, requirement.previewCost, requirement.maxUnitPrice = plan.plannedQuantity, plan.total, maximum
+                requirement.error = plan.missing > 0 and "quantity_or_price_missing" or nil
+                if plan.missing > 0 or plan.plannedQuantity <= 0 then complete = false end
+            else requirement.error = nil end
             Next()
         end)
     end
-
-    Next()
+    AHT.AH:Search(order.output, function(_, meta)
+        if not Active() then return end
+        if meta.error then
+            order.status, order.lastError = "paused", meta.error
+            AHT.Store:Save()
+            if callback then callback(nil, meta.error) end
+        else Next() end
+    end)
     return true
 end
 
@@ -339,6 +393,13 @@ function AHT.Production:PrepareRequirement(order, requirement, callback)
         end
         self.runtimePlans[tostring(order.id)] = self.runtimePlans[tostring(order.id)] or {}
         self.runtimePlans[tostring(order.id)][tostring(requirement.itemID)] = plan
+        local valid, reason = self:ValidateOrder(order, plan)
+        if not valid then callback(nil, reason) return end
+        plan.validate = function(refreshed, total)
+            local allowed, errorMessage = self:ValidateOrder(order, refreshed, total)
+            if allowed then self.runtimePlans[tostring(order.id)][tostring(requirement.itemID)] = refreshed end
+            return allowed, errorMessage
+        end
         callback(plan, nil)
     end)
 end
@@ -348,6 +409,7 @@ function AHT.Production:Start(orderOrID, callback)
     if not order or not IsActive(order) then return false, "order_missing" end
     if not order.preview or not order.preview.complete then return false, "preview_required" end
     if not order.preview.meetsMargin then return false, "margin_below_minimum" end
+    if not order.preview.meetsBudget then return false, "budget_exceeded" end
     if self.active and tostring(self.active.orderID) ~= tostring(order.id) then
         if AHT.Buyer and AHT.Buyer.pending then return false, "another_purchase_in_progress" end
         local previous = self:GetOrder(self.active.orderID)
@@ -359,6 +421,23 @@ function AHT.Production:Start(orderOrID, callback)
 end
 
 function AHT.Production:Continue(orderOrID, callback, allowItemPurchase)
+    local order = self:GetOrder(orderOrID)
+    if not order or not IsActive(order) then return false, "order_missing" end
+    if AHT.Buyer.pending or AHT.Scanner.running or AHT.Scanner.marketDiscovery or AHT.Scanner.replication then return false, "purchase_in_progress" end
+    if not AHT.AHOpen then return false, "auction_house_closed" end
+    if callback then self.callback = callback end
+    -- Refresh output AND every unfinished input before the next purchase.
+    return self:PreviewOrder(order, function(_, reason)
+        local allowed, errorMessage = self:ValidateOrder(order)
+        if reason or not allowed then
+            order.status, order.lastError = "paused", reason or errorMessage
+            self:Notify("error", order.lastError); AHT.Store:Save(); return
+        end
+        self:ContinuePrepared(order, callback, allowItemPurchase)
+    end)
+end
+
+function AHT.Production:ContinuePrepared(orderOrID, callback, allowItemPurchase)
     local order = self:GetOrder(orderOrID)
     if not order or not IsActive(order) then return false, "order_missing" end
     if callback then self.callback = callback end
@@ -440,6 +519,7 @@ function AHT.Production:OnBuyerState(order, requirement, state, data)
         requirement.bought = (tonumber(requirement.bought) or 0) + quantity
         requirement.spent = (tonumber(requirement.spent) or 0) + total
         requirement.lastPurchaseAt = AHT:Now()
+        self:ValidateOrder(order)
         local purchases = AHT.DB.production.purchases
         table.insert(purchases, {
             orderID = order.id,

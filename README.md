@@ -6,7 +6,23 @@
 
 Ein eigenständiger Auction-House-, Rezept- und Margenanalysator für **World of Warcraft: Forever**. Das Addon ist aus dem ursprünglichen `TWOW_AH_Trader`-Projekt abgeleitet, verwendet aber eine getrennte moderne API-Schicht für die Forever-Beta.
 
-> Status: Beta-Port für Interface `16001` / Version `0.8.0-beta`. Rezept-, Commodity-Kauf- und Post-Events müssen weiterhin im echten Forever-Client verifiziert werden.
+> Status: Forever-Beta, Interface `16001`, Version `0.9.0-beta`. Lua-5.1-Verhaltenstests bestehen; echte Client-Käufe, Darstellung und vollständiger Spielneustart bleiben separat abzunehmen.
+
+## Neu: klarere Arbeitsabläufe nach Auctionator-Vorbild
+
+- Rezeptkosten, Gewinn und Verkaufspreis in der Haupttabelle eindeutig **pro Stück**. Zielmengen im Einkaufsplan sind fertige Items; notwendige Herstellvorgänge und Rundungen werden separat angezeigt.
+- Einkaufsplan mit vollständiger Zutatenliste: Bedarf, Tasche, gespeicherte Bank, Reservierungen, Fehlmenge, Stück- und Gesamtkosten. Bereits bezahlte Käufe bleiben im Auftragswert enthalten.
+- Vor jeder nächsten Zutat werden Ergebnis und Materialpreise erneut abgefragt. Mindestmarge, Mindestgewinn, Budget und verfügbares Gold werden auch unmittelbar vor dem geschützten Kauf geprüft.
+- Verkaufsarbeitsplatz mit Taschenliste, aktueller Konkurrenz, Historie, Preisminimum, Nettoerlös und Kaution. Gold-/Silber-/Kupfer-Eingabe; Forever-Dauern **2/8/24 Stunden**, intern API-Werte **1/2/3**. Nicht teilbare Stapel werden als ausdrücklich getrennte Posts gezeigt.
+- Kaufchancen verwenden korrekte Prozentgrenzen und positiven Nettoüberschuss; NPC-Liquidation ist getrennt von spekulativem AH-Wiederverkauf. Datenabdeckung ist keine Erfolgswahrscheinlichkeit; Angebotsmenge ist keine Nachfrage.
+- Marktübersichten überschreiben keine detaillierten Verteilungen. Preisquelle und Verteilungsalter bleiben erhalten; unbekannte Listingzahlen werden als `?` angezeigt. Beobachtete Items, Rezeptzutaten und Kandidaten werden nach einem erfolgreichen Übersichtsscan detailliert geprüft.
+- Begrenzter Pool sichtbarer Tabellenzeilen, gebündelte Suchupdates, sortierbare Spalten und **Rechtsklick auf jede Überschrift zum Filtern**. Suche, Sortierung, Filter, optionale Marktspalten und Position werden je Ansicht gespeichert.
+- Native WoW-Reiter, Itemicons, Seltenheitsfarben und Münzanzeigen. Schwarze, deckende, verschiebbare Arbeitsfenster; Escape schließt das oberste AHT-Fenster. Der Rezeptplan bleibt unabhängig vom AH-Fenster.
+- Benannte Einkaufs-/Beobachtungslisten, gemeinsame offene Zutaten mehrerer Aufträge, letzte Suchen, 7-/30-Tage-Preisbalken und kleine Einstellungen unter **Mehr**.
+- Schema-5-Migration ohne Löschen vorhandener Preise/Rezepte. Markt und Historie werden nach Region und vom Client gemeldeten verbundenen Realms getrennt. Altbestände behalten den Hinweis „Herkunft unbekannt“; das tatsächliche Forever-Marktpoolverhalten muss im Client geprüft werden.
+- Optionaler Auctionator-API-v1-Fallback mit Quelle/Alter und Einkaufslistenexport. Fremde Cachepreise erzeugen **keine** neuen AHT-Historienproben. Standalone-Betrieb bleibt möglich.
+
+Geschützte Käufe benötigen sichtbare Spieleraktionen. AHT bereitet die nächsten Schritte automatisch vor, umgeht aber keine WoW-Bestätigungen. Parallelkäufe oder parallele Vollscans in Auctionator und AHT vermeiden. Der manuell auswählbare **Replikat-Scan ist experimentell** und fällt bei Ablehnung/Timeout auf die AH-Übersicht mit maximal 100 Seiten zurück.
 
 ## Funktionen
 
@@ -16,18 +32,18 @@ Ein eigenständiger Auction-House-, Rezept- und Margenanalysator für **World of
 - kompatibler TooltipDataProcessor-Hook für die Forever-Beta ohne veralteten `OnTooltipSetItem`-Zugriff
 - aktueller Preis, altersgewichteter Durchschnitt, robuster Marktwert und Preisänderung seit dem letzten Scan in Item-Hovern und Kontextfenstern
 - Shift+Linksklick auf eine Ergebniszeile öffnet das Item über die exakte AH-Suche, ohne das Trader-Fenster zu schließen
-- Strg+Linksklick auf ein herstellbares Ergebnis öffnet im AH einen Reiter mit Ergebnis-/Material-Listings, Bedarf, Tasche/Bankbestand und separaten Kaufaktionen
+- Strg+Linksklick auf ein herstellbares Ergebnis öffnet den eigenständigen Rezeptplan mit Ergebnis-/Material-Listings, Bedarf, Tasche/Bankbestand und separaten Kaufaktionen
 - Rezeptauswertung und Gewinn-/Margenberechnung
 - Materialüberwachung und begrenzte Marktpreis-Historie
 - robuste Marktwerte aus Preisverteilung, altersgewichteten Tagessnapshots, Preisband und Trend
-- Chancenansicht für Kauf- und Verkaufsgelegenheiten mit AH-Gebühr, Liquidität, ROI und NPC-Vergleich
+- Chancenansicht für Kauf- und Verkaufsgelegenheiten mit AH-Gebühr, Datenabdeckung, ROI und getrenntem NPC-Vergleich
 - vollständiger AH-Markt-Scan über alle Browse-Seiten; Chancen werden nicht mehr auf bekannte Rezept-, Inventar- oder Materialitems begrenzt
 - Kaufpläne für Items und Commodities mit Preisprüfung und sichtbarer Bestätigung
 - berufsübergreifende Herstellungsaufträge mit Mengenempfehlung und Live-Marge
 - automatische gemeinsame Einkaufsliste für alle Rezeptzutaten
 - Taschen- und Bankbestand mit Reservierungen zwischen mehreren Herstellungsaufträgen
 - dauerhaftes Kaufprotokoll mit gekaufter Menge und Goldkosten pro Auftrag
-- Postpläne mit Bestands-, Deposit- und Preisprüfung
+- Verkaufspläne mit Bestands-, Kautions- und aktueller Konkurrenzprüfung
 - Runenstoff-/Ruf-Funktion für Hauptstadtfraktionen bis Ehrfürchtig
 - Transmutationsanalyse
 - Runtime-Diagnose über `/aht debug`
@@ -35,8 +51,8 @@ Ein eigenständiger Auction-House-, Rezept- und Margenanalysator für **World of
 - Marktansicht über alle erfassten AH-Items, mit Filtern für beobachtete Items und Taschen-/Bankbestand
 - Scan-Auswahl für bekannte Items, den vollständigen AH-Markt oder ein ausgewähltes Item; Fortschritt und Teilscans werden angezeigt
 - klickbare Spaltenüberschriften und Detailbereich für Preisverlauf, Bestand, Zutaten und Herstellvorschläge
-- UI mit globaler Suche, Profitfilter und gespeicherter Fenster-/Sortierposition
-- dynamische Tabellenzeilen ohne künstliche 24-Zeilen-Grenze
+- UI mit Suche und gespeicherten Filtern, Spalten und Sortierposition je Ansicht
+- wiederverwendete sichtbare Tabellenzeilen ohne Begrenzung der Ergebnisanzahl
 - persistenter SavedVariables-Schutz gegen temporär leere Berufsdaten beim Clientstart sowie reparierte Markt-Indizes nach einem Neustart
 - persistenter Berufskatalog mit Rezeptindex: gespeicherte Rezepte werden direkt nach dem Neustart geladen; Berufsevents führen nur einen Delta-Upsert für neue oder geänderte Rezepte aus
 - verschiebbare Dialoge ohne Überlagerung von Rezeptaktions- und Postplanfenster
@@ -52,7 +68,7 @@ Den Ordner `WOW4E_AH_Trader` nach folgendem Pfad kopieren:
 World of Warcraft\_classic_beta_\Interface\AddOns\WOW4E_AH_Trader\
 ```
 
-Danach im Client `/reload` ausführen oder den Client neu starten.
+**Für 0.9.0 das Spiel vollständig beenden und neu starten**, weil neue TOC-Module hinzugekommen sind. Ein bloßes `/reload` übernimmt neue Dateilisten nicht zuverlässig. Die bestehende Datei `WTF/Account/<Account>/SavedVariables/WOW4E_AH_Trader.lua` nicht löschen oder während eines laufenden Clients überschreiben.
 
 ## Befehle
 
@@ -128,8 +144,10 @@ WOW4E_AH_Trader/
 ├── Reputation.lua          Ruf-/Runenstoffanalyse
 ├── Scanner.lua             Markt-Scanner
 ├── Store.lua               SavedVariables und Preis-Historie
+├── Commerce.lua            Einkaufslisten, optionale Auctionator-API, Herkunft und Fehlertexte
 ├── Tooltips.lua            AH-Werte in Standard-Itemtooltips
 ├── UI.lua                  Hauptfenster und Dialoge
+├── UX.lua                  Tabellenpool, Filter, wiederverwendbare Arbeitsfenster und Verlauf
 └── Assets/
     └── WOW4E_AH_Trader-logo.png
 ```
@@ -144,6 +162,16 @@ node .\WOW4E_AH_Trader\Tests\lua-balance.mjs
 ```
 
 Ein erfolgreicher Audit ersetzt keinen echten Test im Forever-Client. Für die erste Ingame-Prüfung empfiehlt sich ein kleiner Scan sowie ein unkritischer Kauf-/Postversuch mit niedriger Menge.
+
+Zusätzlich echte Lua-5.1-Ausführung mit nachgebildeten WoW-APIs, einschließlich Ereigniskette und serialisiertem Neustart:
+
+```powershell
+python -m venv .venv-aht-tests
+.\.venv-aht-tests\Scripts\python.exe -m pip install -r .\WOW4E_AH_Trader\Tests\requirements.txt
+.\.venv-aht-tests\Scripts\python.exe .\WOW4E_AH_Trader\Tests\RunBehavior.py
+```
+
+Die Testabhängigkeit ist ausschließlich für Entwickler; das Addon benötigt weder Python noch andere Addons. Zur Client-Abnahme siehe [Abnahme und Umsetzung](WOW4E_AH_Trader/Tests/CLIENT_ACCEPTANCE.md).
 
 ## Abgrenzung
 

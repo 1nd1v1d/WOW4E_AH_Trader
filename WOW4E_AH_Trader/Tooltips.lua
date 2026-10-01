@@ -71,9 +71,10 @@ local function AddMarketLines(tooltip, itemIDOverride)
     if tooltip.AddLine then
         local updated = snapshot.updatedAt and date("%d.%m.%y %H:%M", snapshot.updatedAt) or "?"
         tooltip:AddLine(string.format(
-            "Angebot: %d Stück / %d Listings | Scan: %s",
-            snapshot.totalQuantity or 0, snapshot.listingCount or 0, updated
+            "Angebot: %s Stück / %s Listings | Scan: %s",
+            tostring(snapshot.totalQuantity or "?"), tostring(snapshot.listingCount or "?"), updated
         ), 0.62, 0.72, 0.95)
+        tooltip:AddLine("Quelle: " .. (AHT.Commerce and AHT.Commerce:SourceText(snapshot.source) or "unbekannt"), 0.62, 0.72, 0.95)
     end
     AHT.Tooltips.processing = false
     if tooltip.Show then tooltip:Show() end

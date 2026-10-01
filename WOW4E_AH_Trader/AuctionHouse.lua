@@ -185,7 +185,7 @@ function AHT.AH:OpenItemInAuctionHouse(target)
     -- The official result event will still update the AH frame when it listens
     -- to C_AuctionHouse search responses.
     if C_AuctionHouse and C_AuctionHouse.SendSearchQuery then
-        local ok = pcall(C_AuctionHouse.SendSearchQuery, itemKey, { sortOrder = 0, reverseSort = false }, false)
+        local ok = pcall(C_AuctionHouse.SendSearchQuery, itemKey, { { sortOrder = 0, reverseSort = false } }, false)
         if ok then return true end
     end
     return false, "auction_house_search_control_missing"
@@ -193,6 +193,8 @@ end
 
 function AHT.AH:Pump()
     if self.active then return end
+    if #self.queue == 0 then return end
+    if AHT.Buyer and AHT.Buyer.pending and AHT.Buyer.pending.state ~= "refreshing" then self:SchedulePump() return end
     if not AHT.AHOpen then
         while #self.queue > 0 do
             local operation = table.remove(self.queue, 1)
@@ -223,7 +225,7 @@ function AHT.AH:Pump()
     -- A valid modern sort descriptor is required by the client. We sort the
     -- returned rows ourselves, so the commodity price order is sufficient for
     -- both commodity and item searches.
-    local sorts = { sortOrder = 0, reverseSort = false }
+    local sorts = { { sortOrder = 0, reverseSort = false } }
     local ok, err = SafeCall(C_AuctionHouse.SendSearchQuery, operation.itemKey, sorts, false)
     if not ok then
         self:Finish({}, { error = tostring(err or "send_search_query_failed") })
@@ -304,7 +306,7 @@ function AHT.AH:CollectCommodityResults(operation)
     local total = C_AuctionHouse.GetNumCommoditySearchResults(operation.target.itemID) or 0
     for index = 1, total do
         local info = C_AuctionHouse.GetCommoditySearchResultInfo(operation.target.itemID, index)
-        if info and (tonumber(info.quantity) or 0) > 0 and (tonumber(info.unitPrice) or 0) > 0 then
+        if info and (tonumber(info.quantity) or 0) > 0 and (tonumber(info.unitPrice) or 0) > 0 and not IsOwned(info) then
             count = count + 1
             totalQuantity = totalQuantity + info.quantity
             table.insert(prices, info.unitPrice)
@@ -336,7 +338,19 @@ function AHT.AH:Finish(results, meta)
     self.active = nil
     if operation then
         meta = meta or {}
-        meta.operationID = operation.id
+        self.sessionToken = self.sessionToken or (tostring(AHT:Now()) .. ":" .. tostring(GetTime and GetTime() or 0))
+        meta.operationID = self.sessionToken .. ":" .. tostring(operation.id)
+        self.lastResults = { [tostring(operation.target.itemID)] = results }
+        if not meta.error and AHT.Store then
+            meta.minPrice = results[1] and results[1].unitPrice or nil
+            meta.source = "detailed"
+            meta.depth = {}
+            for _, offer in ipairs(results or {}) do
+                table.insert(meta.depth, { unitPrice = offer.unitPrice, quantity = offer.quantity,
+                    kind = offer.kind, buyoutAmount = offer.buyoutAmount })
+            end
+            AHT.Store:RecordMarket(operation.target, meta)
+        end
         self:CallCallback(operation, results, meta)
     end
     AHT.State.status = AHT.AHOpen and "ah_open" or "ready"
@@ -372,6 +386,14 @@ function AHT.AH:OnEvent(eventName, itemRef)
             return
         end
         local results, meta = self:CollectItemResults(operation)
+        if C_AuctionHouse.HasFullItemSearchResults and C_AuctionHouse.RequestMoreItemSearchResults then
+            local ok, full = pcall(C_AuctionHouse.HasFullItemSearchResults, operation.itemKey)
+            if ok and not full then
+                local requested = pcall(C_AuctionHouse.RequestMoreItemSearchResults, operation.itemKey)
+                if requested then operation.startedAt = GetTime(); return end
+                meta.error = "item_pagination_failed"
+            end
+        end
         self:Finish(results, meta)
     elseif eventName == "COMMODITY_SEARCH_RESULTS_UPDATED" then
         local operation = self.active
@@ -379,6 +401,14 @@ function AHT.AH:OnEvent(eventName, itemRef)
             return
         end
         local results, meta = self:CollectCommodityResults(operation)
+        if C_AuctionHouse.HasFullCommoditySearchResults and C_AuctionHouse.RequestMoreCommoditySearchResults then
+            local ok, full = pcall(C_AuctionHouse.HasFullCommoditySearchResults, operation.target.itemID)
+            if ok and not full then
+                local requested = pcall(C_AuctionHouse.RequestMoreCommoditySearchResults, operation.target.itemID)
+                if requested then operation.startedAt = GetTime(); return end
+                meta.error = "commodity_pagination_failed"
+            end
+        end
         self:Finish(results, meta)
     end
 end

@@ -2,7 +2,7 @@ WOW4E_AHT = WOW4E_AHT or {}
 local AHT = WOW4E_AHT
 
 AHT.ADDON_NAME = "WOW4E_AH_Trader"
-AHT.VERSION = "0.8.1-beta"
+AHT.VERSION = "0.9.0-beta"
 AHT.AHOpen = false
 AHT.Initialized = false
 AHT.State = {
@@ -53,6 +53,7 @@ local EVENTS = {
     "AUCTION_HOUSE_PURCHASE_COMPLETED",
     "AUCTION_HOUSE_PURCHASE_FAILED",
     "AUCTION_HOUSE_AUCTION_CREATED",
+    "REPLICATE_ITEM_LIST_UPDATE",
     "AUCTION_HOUSE_NEW_BID_RECEIVED",
 }
 
@@ -132,8 +133,9 @@ function AHT:CallSafely(label, fn, ...)
 end
 
 function AHT:Initialize()
-    if self.Initialized then return end
-    if type(WOW4E_AHT_DB) ~= "table" then
+    if self.Initialized then return true end
+    self.State.loadPhase = "saved_variables"
+    if type(WOW4E_AHT_DB) ~= "table" and not (self.Store and self.Store.canonicalDB) then
         self.State.status = "database_missing"
         self.State.dbReady = false
         if self.UI and self.UI.ShowDatabaseRecovery then self.UI:ShowDatabaseRecovery() end
@@ -147,8 +149,8 @@ function AHT:Initialize()
         if self.UI and self.UI.ShowDatabaseRecovery then self.UI:ShowDatabaseRecovery() end
         return false
     end
-    self.Initialized = true
     self.State.dbReady = true
+    self.State.loadPhase = "modules"
 
     if self.Recipes and self.Recipes.Load then self.Recipes:Load() end
     if self.Capabilities then self.Capabilities:Probe() end
@@ -159,7 +161,9 @@ function AHT:Initialize()
     if self.UI and self.UI.HideDatabaseRecovery then self.UI:HideDatabaseRecovery() end
     if self.Reputation then self.Reputation:Initialize() end
 
+    self.Initialized = true
     self.State.status = "ready"
+    self.State.loadPhase = "ready"
     return true
 end
 
@@ -255,6 +259,7 @@ end)
 AHT.EventFrame:SetScript("OnUpdate", function(_, elapsed)
     if AHT.AH and AHT.AH.OnUpdate then AHT.AH:OnUpdate(elapsed) end
     if AHT.Buyer and AHT.Buyer.OnUpdate then AHT.Buyer:OnUpdate(elapsed) end
+    if AHT.Scanner and AHT.Scanner.OnUpdate then AHT.Scanner:OnUpdate(elapsed) end
 end)
 
 SLASH_WOW4E_AHT1 = "/aht"

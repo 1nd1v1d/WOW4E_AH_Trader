@@ -127,6 +127,10 @@ function AHT.Scanner:StartAll()
 end
 
 function AHT.Scanner:StartMarketDiscovery()
+    if AHT.Buyer and AHT.Buyer.pending or AHT.AH and (AHT.AH.active or #AHT.AH.queue > 0) then
+        Notify("Zuerst laufende Preisprüfungen oder Einkäufe abschließen.")
+        return false
+    end
     if self.running or self.marketDiscovery then
         Notify("Ein AH-Scan läuft bereits.")
         return false
@@ -190,6 +194,10 @@ function AHT.Scanner:FinishMarketDiscovery(status, reason)
     AHT.State.status = AHT.AHOpen and "ah_open" or "ready"
     local stateText = finalStatus == "partial" and "teilweise" or finalStatus == "aborted" and "abgebrochen" or finalStatus == "failed" and "fehlgeschlagen" or "abgeschlossen"
     Notify(string.format("AH-Markt-Scan %s: %d Items, %d verworfen, %d Seiten.", stateText, discovery.itemCount or 0, discovery.rejectedCount or 0, discovery.pageCount or 0))
+    if finalStatus == "completed" and AHT.DB then
+        AHT.DB.lastCompletedMarketScanAt = AHT:Now()
+        self:StartCandidateDetails()
+    end
     if AHT.UI then
         AHT.UI:RefreshStatus()
         AHT.UI:Refresh()
@@ -261,8 +269,7 @@ function AHT.Scanner:ProcessMarketBrowseResults(results, countPage)
                     -- Browse summaries do not expose the number of listings. The
                     -- row is still a valid current-price sample; exact searches
                     -- continue to provide detailed listing counts for known items.
-                    listingCount = 1,
-                    prices = { minPrice },
+                    source = "browse",
                 })
                 if record then
                     discovery.itemCount = discovery.itemCount + 1
@@ -298,6 +305,7 @@ function AHT.Scanner:OnEvent(eventName, payload)
 end
 
 function AHT.Scanner:Start(targets, mode)
+    if self.replication or AHT.Buyer and AHT.Buyer.pending then Notify("Ein Scan oder Einkauf läuft bereits.") return false end
     if self.running or self.marketDiscovery then
         Notify("Ein Scan läuft bereits.")
         return
@@ -360,6 +368,7 @@ function AHT.Scanner:Next()
                 totalQuantity = totalQuantity,
                 listingCount = meta.listingCount or #results,
                 prices = meta.prices,
+                operationID = meta.operationID,
             })
             self:CountScanResult(record ~= nil)
         end
@@ -370,6 +379,10 @@ function AHT.Scanner:Next()
 end
 
 function AHT.Scanner:Stop(reason)
+    if self.replication then
+        self.replication = nil
+        self:FinishScanRun("aborted", reason)
+    end
     if self.marketDiscovery then
         local discovery = self.marketDiscovery
         local state = reason == "user" and "aborted" or discovery.itemCount > 0 and "partial" or "failed"
@@ -394,4 +407,98 @@ function AHT.Scanner:Stop(reason)
     local stateText = state == "aborted" and "abgebrochen" or state == "partial" and "teilweise" or "fehlgeschlagen"
     Notify("Scan " .. stateText .. ". Bereits erfasste Werte bleiben erhalten.")
     if AHT.UI then AHT.UI:RefreshStatus() end
+end
+
+function AHT.Scanner:StartCandidateDetails()
+    if not AHT.AHOpen then return end
+    local targets, seen = {}, {}
+    for _, material in pairs(AHT.DB.materials) do AddTarget(targets, seen, material) end
+    for _, target in ipairs(AHT.Recipes:Targets()) do AddTarget(targets, seen, target) end
+    local candidates = AHT.Opportunities:Build()
+    local limit = math.max(1, tonumber(AHT.DB.settings.detailedCandidateLimit) or 50)
+    for i = 1, math.min(limit, #candidates) do AddTarget(targets, seen, candidates[i]) end
+    if #targets > 0 then self:Start(targets, "candidate_details") end
+end
+
+-- Experimental Forever path: a rejected/unanswered request falls back to the
+-- supported browse scan. Never infer runtime support from function presence.
+function AHT.Scanner:StartReplication()
+    if not AHT.AHOpen or self.running or self.marketDiscovery or self.replication or AHT.Buyer.pending or AHT.AH.active then return false end
+    if not C_AuctionHouse.ReplicateItems or not C_AuctionHouse.GetNumReplicateItems or not C_AuctionHouse.GetReplicateItemInfo then
+        Notify("Replikat-API fehlt; starte AH-Übersicht (maximal 100 Seiten).")
+        return self:StartMarketDiscovery()
+    end
+    local last = tonumber(AHT.DB.lastReplicaRequestedAt) or 0
+    if AHT:Now() - last < 900 then
+        Notify("Replikat-Abfrage hat 15 Minuten Abklingzeit; starte AH-Übersicht.")
+        return self:StartMarketDiscovery()
+    end
+    if not self:BeginScanRun("replicate", nil) then return false end
+    local operation = { startedAt = GetTime(), groups = {}, index = 0 }
+    self.replication = operation
+    local ok, accepted = pcall(C_AuctionHouse.ReplicateItems)
+    if not ok or accepted == false then
+        self.replication = nil; self:FinishScanRun("failed", "replicate_rejected")
+        Notify("Replikat-Abfrage abgelehnt; starte AH-Übersicht.")
+        return self:StartMarketDiscovery()
+    end
+    AHT.DB.lastReplicaRequestedAt = AHT:Now(); AHT.Store:Save()
+    Notify("Experimenteller Replikat-Scan: warte auf bestätigte Serverdaten. Nicht parallel mit Auctionator scannen.")
+    return true
+end
+
+function AHT.Scanner:ProcessReplication()
+    local operation = self.replication
+    if not operation then return end
+    local count = C_AuctionHouse.GetNumReplicateItems()
+    if type(count) ~= "number" or count < 0 then
+        self.replication = nil; self:FinishScanRun("failed", "replicate_contract_invalid"); self:StartMarketDiscovery(); return
+    end
+    operation.total = count
+    local function Batch()
+        if self.replication ~= operation or not AHT.AHOpen then return end
+        local limit = math.min(count, operation.index + 250)
+        for index = operation.index, limit - 1 do
+            local info = { C_AuctionHouse.GetReplicateItemInfo(index) }
+            local itemID, quantity, buyout = tonumber(info[17]), tonumber(info[3]), tonumber(info[10])
+            if itemID and quantity and quantity > 0 and buyout and buyout > 0 then
+                local group = operation.groups[itemID] or { itemID = itemID, name = info[1], prices = {}, totalQuantity = 0, listingCount = 0 }
+                operation.groups[itemID] = group
+                table.insert(group.prices, math.floor(buyout / quantity))
+                group.totalQuantity = group.totalQuantity + quantity
+                group.listingCount = group.listingCount + 1
+            end
+        end
+        operation.index = limit
+        if AHT.UI then AHT.UI:RefreshStatus() end
+        if limit < count then C_Timer.After(0.01, Batch) return end
+        for _, group in pairs(operation.groups) do
+            table.sort(group.prices)
+            group.minPrice, group.source = group.prices[1], "replicate"
+            self:CountScanResult(AHT.Store:RecordMarket(group, group) ~= nil)
+        end
+        self.replication = nil
+        local status = self:GetResultStatus()
+        self:FinishScanRun(status)
+        if status == "completed" then AHT.DB.lastCompletedMarketScanAt = AHT:Now() end
+        AHT.Store:Save()
+        Notify("Replikat-Daten übernommen. Varianten und Kaufbarkeit werden anschließend detailliert geprüft.")
+        self:StartCandidateDetails()
+        if AHT.UI then AHT.UI:Refresh() end
+    end
+    Batch()
+end
+
+local baseOnEvent = AHT.Scanner.OnEvent
+function AHT.Scanner:OnEvent(eventName, payload)
+    if self.replication and eventName == "REPLICATE_ITEM_LIST_UPDATE" then self:ProcessReplication() return end
+    baseOnEvent(self, eventName, payload)
+end
+
+function AHT.Scanner:OnUpdate()
+    if self.replication and not self.replication.total and GetTime() - self.replication.startedAt > 30 then
+        self.replication = nil; self:FinishScanRun("failed", "replicate_timeout")
+        Notify("Replikat nicht bestätigt. AH-Übersicht als Fallback (maximal 100 Seiten).")
+        self:StartMarketDiscovery()
+    end
 end

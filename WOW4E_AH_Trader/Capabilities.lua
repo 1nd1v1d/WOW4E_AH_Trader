@@ -3,18 +3,18 @@ local AHT = WOW4E_AHT
 AHT.Capabilities = {}
 
 -- The modern auction APIs use enum values (1/2/3), while the UI commonly
--- exposes the familiar 12/24/48 hour choices. Keep that conversion in one
+-- exposes Forever's 2/8/24 hour choices. Keep that conversion in one
 -- place so deposit calculations and posting always receive the API value.
 AHT.AUCTION_DURATIONS = {
-    [12] = 1,
-    [24] = 2,
-    [48] = 3,
+    [8] = 2,
+    [24] = 3,
 }
 
 function AHT:NormalizeAuctionDuration(value)
     value = tonumber(value)
     if not value then return 2 end
-    return self.AUCTION_DURATIONS[value] or math.max(1, math.min(3, math.floor(value)))
+    if value >= 1 and value <= 3 then return math.floor(value) end
+    return self.AUCTION_DURATIONS[value] or 2
 end
 
 local function HasFunction(container, name)

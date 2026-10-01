@@ -35,6 +35,9 @@ local function MakeBackdrop(frame)
     if frame.SetBackdropBorderColor then frame:SetBackdropBorderColor(0.75, 0.48, 0.12, 0.95) end
 end
 
+local GameTooltip = CreateFrame("GameTooltip", "WOW4E_AHT_ContextTooltip", UIParent, "GameTooltipTemplate")
+MakeBackdrop(GameTooltip)
+
 local function MakeDialogMovable(dialog)
     dialog:SetMovable(true)
     dialog:EnableMouse(true)
@@ -51,6 +54,11 @@ local function MakeDialogMovable(dialog)
     end)
     dragHandle:SetScript("OnDragStop", function()
         dialog:StopMovingOrSizing()
+        if dialog.ahtWindowKey and AHT.DB then
+            local x, y = dialog:GetCenter()
+            local cx, cy = UIParent:GetCenter()
+            if x and cx then AHT.DB.ui.windows[dialog.ahtWindowKey] = { x = x - cx, y = y - cy }; AHT.Store:Save() end
+        end
     end)
     dialog.dragHandle = dragHandle
 end
@@ -79,7 +87,7 @@ local function ResultKey(result)
     if not result or result.kind == "info" then return nil end
     if result.recipeID then return "recipe:" .. tostring(result.recipeID) end
     if result.order then
-        return "order:" .. tostring(result.order.createdAt or result.order.name or result.name)
+        return "order:" .. tostring(result.order.id)
     end
     local item = result.output or result
     if not item.itemID then return nil end
@@ -106,9 +114,9 @@ end
 
 local RECIPE_COLUMNS = {
     { key = "name", label = "Rezept / Ergebnis", width = 230 },
-    { key = "ingredientCost", label = "Kosten", width = 105 },
-    { key = "salePrice", label = "Aktuell", width = 105 },
-    { key = "profit", label = "Gewinn", width = 145 },
+    { key = "costPerOutput", label = "Kosten/Stk", width = 105 },
+    { key = "salePrice", label = "Aktuell/Stk", width = 105 },
+    { key = "profitPerOutput", label = "Gewinn/Stk", width = 145 },
     { key = "margin", label = "Marge", width = 115 },
 }
 
@@ -116,8 +124,11 @@ local MATERIAL_COLUMNS = {
     { key = "name", label = "Item", width = 220 },
     { key = "currentPrice", label = "Aktuell", width = 105 },
     { key = "marketValue", label = "Marktwert", width = 115 },
-    { key = "marketTrendPercent", label = "Trend", width = 90 },
-    { key = "updatedAt", label = "Gescannt", width = 170 },
+    { key = "marketTrendPercent", label = "Abweichung", width = 90 },
+    { key = "updatedAt", label = "Alter", width = 110 },
+    { key = "averagePrice", label = "Ø gewichtet", width = 105, optional = true },
+    { key = "priceChangePercent", label = "Änderung", width = 90, optional = true },
+    { key = "totalQuantity", label = "Angebotsmenge", width = 100, optional = true },
 }
 
 local OPPORTUNITY_COLUMNS = {
@@ -138,7 +149,7 @@ local ORDER_COLUMNS = {
 
 local TABLE_WIDTH = 700
 local ROW_HEIGHT = 23
-local MAX_COLUMNS = 7
+local MAX_COLUMNS = 10
 
 local function HeaderButton(parent, text, width)
     local button = CreateFrame("Button", nil, parent)
@@ -220,6 +231,7 @@ function AHT.UI:SaveLayout()
     AHT.DB.ui.professionFilter = self.professionFilter or "all"
     AHT.DB.ui.opportunityDirection = self.opportunityDirection or "all"
     AHT.DB.ui.minimumOpportunityPercent = self.minimumOpportunityPercent or 0
+    self:SaveViewState()
     if AHT.Store then AHT.Store:Save() end
 end
 
@@ -352,7 +364,7 @@ function AHT.UI:ShowDatabaseRecovery(retryAttempted)
     if not self.databaseRecovery then
         local template = BackdropTemplateMixin and "BackdropTemplate" or nil
         local dialog = CreateFrame("Frame", nil, UIParent, template)
-        dialog:SetSize(460, 220)
+        dialog:SetSize(520, 260)
         dialog:SetPoint("CENTER")
         dialog:SetFrameStrata("DIALOG")
         dialog:SetFrameLevel(240)
@@ -367,7 +379,7 @@ function AHT.UI:ShowDatabaseRecovery(retryAttempted)
         dialog.title:SetTextColor(1, 0.84, 0.35)
         dialog.message = Label(dialog, "", 420)
         dialog.message:SetPoint("TOPLEFT", 16, -56)
-        dialog.message:SetHeight(92)
+        dialog.message:SetHeight(130)
         dialog.message:SetJustifyV("TOP")
         if dialog.message.SetWordWrap then dialog.message:SetWordWrap(true) end
         dialog.message:SetTextColor(0.9, 0.86, 0.75)
@@ -399,7 +411,8 @@ function AHT.UI:ShowDatabaseRecovery(retryAttempted)
         title = "Datenbank weiterhin nicht verfügbar"
         message = "Die Datenbankprüfung ist erneut fehlgeschlagen. Es wurde nichts überschrieben. Beende WoW vollständig und prüfe die SavedVariables-Datei und ihre .bak-Sicherung, bevor du eine neue Datenbank anlegst."
     elseif canCreate then
-        message = "Die SavedVariables-Datenbank ist nicht verfügbar. „Erneut prüfen“ prüft nur den aktuellen Spielspeicher; WoW lädt die Datei nur beim Start. Wenn du bereits Daten hattest, lege keine neue Datenbank an. Prüfe nach beendetem Spiel die Datei und ihre .bak-Sicherung."
+        title = "AH Trader – Erstinstallation oder fehlende Daten"
+        message = "Erstinstallation: „Neue Datenbank“ legt deine Sammlung an. Falls du zuvor Daten hattest, nicht neu anlegen! Die SavedVariables-Datenbank ist nicht verfügbar. „Erneut prüfen“ prüft nur den aktuellen Spielspeicher; WoW lädt die Datei nur beim Start. Wenn du bereits Daten hattest, lege keine neue Datenbank an. Prüfe nach beendetem Spiel die Datei und ihre .bak-Sicherung."
     elseif missing then
         message = "Die globale SavedVariables-Referenz fehlt, aber AHT hält die zuvor geladene Tabelle noch im Speicher. Erneut prüfen versucht, diese Referenz wiederherzustellen."
     else
@@ -458,6 +471,7 @@ function AHT.UI:Create()
     self.frame:SetSize(tonumber(ui.width) or 780, tonumber(ui.height) or 600)
     self.frame:SetPoint("CENTER", UIParent, "CENTER", tonumber(ui.x) or 0, tonumber(ui.y) or 0)
     self.frame:SetFrameStrata("DIALOG")
+    self.frame:SetClampedToScreen(true)
     self.frame:SetMovable(true)
     self.frame:EnableMouse(true)
     self.frame:RegisterForDrag("LeftButton")
@@ -627,13 +641,16 @@ function AHT.UI:Create()
     self.searchInput:SetTextInsets(6, 6, 0, 0)
     self.searchInput:SetScript("OnTextChanged", function(box)
         self.searchQuery = string.lower(box:GetText() or "")
-        if self.frame and self.frame:IsShown() then self:Refresh(true) end
+        if self.frame and self.frame:IsShown() then self:RequestRefresh() end
     end)
     self.searchInput:SetScript("OnEscapePressed", function(box)
         box:SetText("")
         box:ClearFocus()
     end)
-    self.searchInput:SetScript("OnEnterPressed", function(box) box:ClearFocus() end)
+    self.searchInput:SetScript("OnEnterPressed", function(box)
+        AHT.Commerce:RememberSearch(box:GetText())
+        box:ClearFocus()
+    end)
     self.searchInput:SetText("")
 
     self.searchLabel = Label(self.frame, "Suchen:", 48)
@@ -713,8 +730,14 @@ function AHT.UI:Create()
     self.detailTitle:SetPoint("TOPLEFT", 10, -7)
     self.detailTitle:SetFontObject("GameFontHighlight")
     self.detailTitle:SetTextColor(1, 0.84, 0.35)
-    self.detailSummary = Label(self.detailPanel, "Klicke ein Item für Preis, Verlauf, Zutaten und Bestand.", 450)
-    self.detailSummary:SetPoint("TOPLEFT", 10, -28)
+    self.detailScroll = CreateFrame("ScrollFrame", nil, self.detailPanel, "UIPanelScrollFrameTemplate")
+    self.detailScroll:SetPoint("TOPLEFT", 10, -28)
+    self.detailScroll:SetPoint("BOTTOMRIGHT", -282, 10)
+    self.detailContent = CreateFrame("Frame", nil, self.detailScroll)
+    self.detailContent:SetSize(440, 82)
+    self.detailScroll:SetScrollChild(self.detailContent)
+    self.detailSummary = Label(self.detailContent, "Klicke ein Item für Preis, Verlauf, Zutaten und Bestand.", 440)
+    self.detailSummary:SetPoint("TOPLEFT", 0, 0)
     self.detailSummary:SetHeight(82)
     self.detailSummary:SetJustifyV("TOP")
     if self.detailSummary.SetWordWrap then self.detailSummary:SetWordWrap(true) end
@@ -727,7 +750,7 @@ function AHT.UI:Create()
         if result.kind == "order" then self:ShowOrderActions(result.order)
         elseif result.kind == "opportunity" then self:ShowOpportunityActions(result)
         elseif result.kind == "material" then self:ShowMaterialActions(result)
-        elseif result.output then self:ShowRecipeActions(result) end
+        elseif result.output then self:ShowBuyDialog(result) end
     end)
     self.detailSearch = Button(self.detailPanel, nil, "Im AH suchen", 112, 25)
     self.detailSearch:SetPoint("RIGHT", -10, 0)
@@ -735,7 +758,10 @@ function AHT.UI:Create()
         if self.selectedResult then self:OpenResultInAuctionHouse(self.selectedResult) end
     end)
 
+    self.scroll:HookScript("OnVerticalScroll", function() self:RenderVisibleRows() end)
+    self.frame:SetScript("OnSizeChanged", function() if self.content then self:RequestRefresh() end end)
     self:CreateRows()
+    self:RestoreViewState(self.viewMode)
     self:RefreshControls()
     self:UpdateNavigation()
     self:Refresh()
@@ -751,6 +777,9 @@ function AHT.UI:CreateRow(index)
     row.bg = row:CreateTexture(nil, "BACKGROUND")
     row.bg:SetAllPoints()
     row.bg:SetColorTexture(rowIndex % 2 == 0 and 0.045 or 0.065, 0.032, 0.018, 0.82)
+    row.icon = row:CreateTexture(nil, "ARTWORK")
+    row.icon:SetSize(18, 18)
+    row.icon:SetPoint("LEFT", 5, 0)
     row.info = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     row.info:SetPoint("LEFT", 8, 0)
     row.info:SetWidth(TABLE_WIDTH - 16)
@@ -1271,10 +1300,8 @@ function AHT.UI:ShowAHRecipePanel(recipe, refresh)
 end
 
 function AHT.UI:EnsureRows(count)
-    local target = math.max(24, tonumber(count) or 0)
-    for index = #self.rows + 1, target do
-        self:CreateRow(index)
-    end
+    local visible = math.min(64, math.max(8, math.ceil((self.scroll:GetHeight() or 300) / ROW_HEIGHT) + 2))
+    for index = #self.rows + 1, visible do self:CreateRow(index) end
 end
 
 function AHT.UI:CreateRows()
@@ -1282,10 +1309,14 @@ function AHT.UI:CreateRows()
 end
 
 function AHT.UI:GetActiveColumns()
-    if self.viewMode == "materials" then return MATERIAL_COLUMNS end
-    if self.viewMode == "opportunities" then return OPPORTUNITY_COLUMNS end
-    if self.viewMode == "orders" then return ORDER_COLUMNS end
-    return RECIPE_COLUMNS
+    local source = self.viewMode == "materials" and MATERIAL_COLUMNS
+        or self.viewMode == "opportunities" and OPPORTUNITY_COLUMNS
+        or self.viewMode == "orders" and ORDER_COLUMNS or RECIPE_COLUMNS
+    local columns = {}
+    for _, column in ipairs(source) do
+        if not column.optional or not (self.hiddenColumns or {})[column.key] then table.insert(columns, column) end
+    end
+    return columns
 end
 
 function AHT.UI:EnsureSortColumn()
@@ -1303,27 +1334,35 @@ function AHT.UI:EnsureSortColumn()
         self.sortColumn = "createdAt"
         self.sortAscending = false
     else
-        self.sortColumn = "profit"
+        self.sortColumn = "profitPerOutput"
         self.sortAscending = false
     end
 end
 
 function AHT.UI:LayoutTable()
     local columns = self:GetActiveColumns()
+    local width = math.max(700, (self.frame:GetWidth() or 780) - 80)
+    local total = 0
+    for _, column in ipairs(columns) do total = total + column.width end
+    self.content:SetWidth(width)
+    self.tableHeader:SetWidth(width)
     local offset = 0
     for index, column in ipairs(columns) do
+        local cellWidth = width * column.width / total
         local header = self.headers[index]
         header:ClearAllPoints()
-        header:SetWidth(column.width)
+        header:SetWidth(cellWidth)
         header:SetPoint("LEFT", offset, 0)
         for _, row in ipairs(self.rows) do
+            row:SetWidth(width)
+            row.info:SetWidth(width - 36)
             local cell = row.cells[index]
             cell:ClearAllPoints()
-            cell:SetPoint("LEFT", offset + 6, 0)
-            cell:SetWidth(column.width - 12)
+            cell:SetPoint("LEFT", offset + (index == 1 and 28 or 6), 0)
+            cell:SetWidth(cellWidth - (index == 1 and 34 or 12))
             cell:SetJustifyH(index == 1 and "LEFT" or "RIGHT")
         end
-        offset = offset + column.width
+        offset = offset + cellWidth
     end
 end
 
@@ -1464,10 +1503,10 @@ function AHT.UI:RefreshDetail()
     local searchable = false
     if result.kind == "material" then
         local counts = AHT.Inventory and AHT.Inventory:GetCount(result.itemID) or { bags = 0, bank = 0, bankKnown = false }
-        table.insert(lines, string.format("Aktuell %s  |  Marktwert %s  |  Ø %s  |  Markttrend %s",
+        table.insert(lines, string.format("Aktuell %s  |  Marktwert %s  |  Ø %s  |  Abweichung %s",
             PriceText(result.currentPrice), PriceText(result.marketValue), PriceText(result.averagePrice), PercentText(result.marketTrendPercent)))
-        table.insert(lines, string.format("Seit letztem Scan %s  |  %d Listings / %d Stück  |  Tasche %d, Bank %s  |  %s",
-            PercentText(result.priceChangePercent), result.listingCount or 0, result.totalQuantity or 0,
+        table.insert(lines, string.format("Seit letztem Scan %s  |  %s Listings / %s Stück  |  Tasche %d, Bank %s  |  %s",
+            PercentText(result.priceChangePercent), tostring(result.listingCount or "?"), tostring(result.totalQuantity or "?"),
             counts.bags or 0, counts.bankKnown and tostring(counts.bank or 0) or "?", ScanAgeText(result.updatedAt)))
         self.detailAction:SetText("Aktionen")
         searchable = true
@@ -1475,7 +1514,7 @@ function AHT.UI:RefreshDetail()
         local direction = result.side == "sell" and "Verkauf" or "Kauf"
         table.insert(lines, string.format("%s-Chance  |  Aktuell %s  |  Marktwert %s  |  Vorteil %s  |  Netto %s  |  ROI %s",
             direction, PriceText(result.currentPrice), PriceText(result.marketValue), PercentText(result.discount),
-            PriceText(result.profit), PercentText(result.roi)))
+            PriceText(result.profit or result.netIncome), PercentText(result.roi)))
         table.insert(lines, string.format("Angebotsmenge %d  |  Historische Samples %d  |  %s",
             result.quantity or 0, result.sampleCount or result.marketSamples or 0, ScanAgeText(result.updatedAt)))
         self.detailAction:SetText(result.side == "sell" and "Verkaufsplan" or "Kaufchance")
@@ -1484,7 +1523,7 @@ function AHT.UI:RefreshDetail()
         local order = result.order or {}
         local requirements = {}
         for index, requirement in ipairs(order.requirements or {}) do
-            if index <= 3 then
+            if index >= 1 then
                 local itemName = requirement.name or AHT:GetItemInfo(requirement.itemID) or tostring(requirement.itemID)
                 table.insert(requirements, string.format("%s: %d/%d", itemName,
                     requirement.bought or 0, requirement.toBuy or requirement.quantity or 0))
@@ -1501,12 +1540,12 @@ function AHT.UI:RefreshDetail()
         table.insert(lines, string.format("Kosten %s  |  Aktueller Verkauf %s  |  Marktwert %s  |  Netto %s  |  Marge %s  |  Vorschlag %d Herstellvorgänge",
             PriceText(result.ingredientCost), PriceText(sale), PriceText(result.marketSalePrice), PriceText(result.profit),
             result.margin and string.format("%.1f%%", result.margin) or "-", result.suggestedCrafts or 0))
-        table.insert(lines, string.format("Seit letztem Scan %s  |  Markttrend %s  |  %s",
+        table.insert(lines, string.format("Seit letztem Scan %s  |  Abweichung %s  |  %s",
             PercentText(snapshot and snapshot.priceChangePercent), PercentText(snapshot and snapshot.trendPercent), ScanAgeText(snapshot and snapshot.updatedAt)))
         local ingredients = {}
         local crafts = math.max(1, tonumber(result.suggestedCrafts) or 0)
         for index, reagent in ipairs(result.reagents or {}) do
-            if index <= 3 then
+            if index >= 1 then
                 local quantity = (tonumber(reagent.quantity) or 1) * crafts
                 local itemName = reagent.name or AHT:GetItemInfo(reagent.itemID) or tostring(reagent.itemID)
                 local price = AHT.Store and AHT.Store:GetPrice(reagent.itemID)
@@ -1527,12 +1566,14 @@ function AHT.UI:RefreshDetail()
         else
             table.insert(lines, "Zutaten und Einkaufspreise sind noch nicht vollständig erfasst.")
         end
-        self.detailAction:SetText("Kaufplan")
+        self.detailAction:SetText("Einkauf planen")
         searchable = output.itemID ~= nil
     end
 
     self.detailTitle:SetText(result.name or (result.order and result.order.name) or "Itemdetails")
     self.detailSummary:SetText(table.concat(lines, "\n"))
+    self.detailSummary:SetHeight(math.max(82, self.detailSummary:GetStringHeight() + 10))
+    self.detailContent:SetHeight(self.detailSummary:GetHeight())
     self.detailAction:Enable()
     if searchable then self.detailSearch:Show() else self.detailSearch:Hide() end
 end
@@ -1628,7 +1669,7 @@ function AHT.UI:ShowMaterialContext(result, owner)
     GameTooltip:AddDoubleLine("Robuster Marktwert", result.marketValue and AHT:FormatMoneyPlain(result.marketValue) or "?", 0.78, 0.78, 0.78, 0.45, 0.85, 1)
     GameTooltip:AddDoubleLine("P25", result.p25 and AHT:FormatMoneyPlain(result.p25) or "?", 0.65, 0.65, 0.65, 0.65, 0.65, 0.65)
     GameTooltip:AddDoubleLine("P75", result.p75 and AHT:FormatMoneyPlain(result.p75) or "?", 0.65, 0.65, 0.65, 0.65, 0.65, 0.65)
-    GameTooltip:AddLine(string.format("Angebot: %d Stück / %d Listings", result.totalQuantity or 0, result.listingCount or 0), 0.62, 0.72, 0.95)
+    GameTooltip:AddLine(string.format("Angebot: %s Stück / %s Listings", tostring(result.totalQuantity or "?"), tostring(result.listingCount or "?")), 0.62, 0.72, 0.95)
     GameTooltip:AddDoubleLine("Seit letztem Scan", result.priceChangePercent and string.format("%+.1f%%", result.priceChangePercent) or "noch kein Vergleich", 0.78, 0.78, 0.78, 0.45, 1, 0.45)
     GameTooltip:AddDoubleLine("Aktuell vs. Marktwert", result.marketTrendPercent and string.format("%+.1f%%", result.marketTrendPercent) or "?", 0.78, 0.78, 0.78, 0.45, 0.85, 1)
     GameTooltip:AddLine(string.format("Markt-Tage: %d | Letzter Scan: %s", result.marketSamples or 0, result.updatedText or "-"), 0.62, 0.72, 0.95)
@@ -1649,79 +1690,16 @@ function AHT.UI:ShowOpportunityContext(result, owner)
     GameTooltip:AddDoubleLine("Altersgewichteter Ø", result.averagePrice and AHT:FormatMoneyPlain(result.averagePrice) or "?", 0.78, 0.78, 0.78, 0.45, 1, 0.45)
     GameTooltip:AddDoubleLine("Preisänderung seit letztem Scan", result.priceChangePercent and string.format("%+.1f%%", result.priceChangePercent) or "noch kein Vergleich", 0.78, 0.78, 0.78, 0.45, 1, 0.45)
     GameTooltip:AddDoubleLine("Aktuell vs. Marktwert", result.trendPercent and string.format("%+.1f%%", result.trendPercent) or "?", 0.78, 0.78, 0.78, 0.45, 0.85, 1)
-    GameTooltip:AddDoubleLine(selling and "Nettoerlös pro Stück" or "Netto pro Stück", AHT:FormatMoneyPlain(result.profit or 0), 0.45, 1, 0.45, 0.45, 1, 0.45)
+    GameTooltip:AddDoubleLine(selling and (result.costBasis and "Gewinn pro Stück" or "Nettoerlös pro Stück") or "Potenzial pro Stück", AHT:FormatMoneyPlain(result.profit or result.netIncome or 0), 0.45, 1, 0.45, 0.45, 1, 0.45)
     GameTooltip:AddDoubleLine("ROI", string.format("%.1f%%", result.roi or 0), 0.78, 0.78, 0.78, 0.45, 1, 0.45)
     GameTooltip:AddLine(string.format("%s %.1f%% | Empfehlung: %s", selling and "Aufschlag" or "Rabatt", result.discount or 0, result.bestMethod or "AH"), 0.78, 0.78, 0.78)
     if selling then
         GameTooltip:AddLine(string.format("Bestand: Tasche %d | Bank %s", result.stockBags or 0, result.bankKnown and tostring(result.stockBank or 0) or "?"), 0.62, 0.72, 0.95)
     else
-        GameTooltip:AddLine(string.format("Angebot: %d Stück / %d Listings", result.quantity or 0, result.listingCount or 0), 0.62, 0.72, 0.95)
+        GameTooltip:AddLine(string.format("AH-Angebotsmenge: %s / %s Listings (nicht Kaufmenge)", tostring(result.availableSupply or "?"), tostring(result.listingCount or "?")), 0.62, 0.72, 0.95)
     end
-    GameTooltip:AddLine(string.format("Vertrauen %d%% | Klick für Details.", result.confidence or 0), 0.62, 0.62, 0.62)
+    GameTooltip:AddLine(string.format("Datenabdeckung %d/100, keine Erfolgswahrscheinlichkeit | %s", result.confidence or 0, AHT.Commerce:SourceText(result.source)), 0.62, 0.62, 0.62)
     GameTooltip:Show()
-end
-
-function AHT.UI:ShowMaterialActions(result)
-    if not result then return end
-    if self.actionDialog then self.actionDialog:Hide() end
-    local template = BackdropTemplateMixin and "BackdropTemplate" or nil
-    local dialog = CreateFrame("Frame", nil, UIParent, template)
-    dialog:SetSize(430, 190)
-    dialog:SetPoint("CENTER")
-    dialog:SetFrameStrata("TOOLTIP")
-    MakeBackdrop(dialog)
-    self.actionDialog = dialog
-
-    local title = Label(dialog, result.name or "Material", 400)
-    title:SetPoint("TOPLEFT", 14, -14)
-    title:SetFontObject("GameFontHighlightLarge")
-    local info = Label(dialog, string.format(
-        "Aktuell %s | Ø %s | Marktwert %s\nBestand aus Tasche und Bank wird bei Herstellungsaufträgen berücksichtigt.",
-        result.currentPrice and AHT:FormatMoneyPlain(result.currentPrice) or "?",
-        result.averagePrice and AHT:FormatMoneyPlain(result.averagePrice) or "?",
-        result.marketValue and AHT:FormatMoneyPlain(result.marketValue) or "?"
-    ), 400)
-    info:SetPoint("TOPLEFT", 14, -50)
-    info:SetHeight(52)
-    info:SetJustifyV("TOP")
-
-    local scan = Button(dialog, nil, "Neu scannen", 105, 24)
-    scan:SetPoint("BOTTOMLEFT", 14, 12)
-    scan:SetScript("OnClick", function()
-        if not AHT.AHOpen or not AHT.AH then
-            info:SetText("Das Auktionshaus muss für einen Live-Scan geöffnet sein.")
-            return
-        end
-        scan:Disable()
-        AHT.AH:Search({ itemID = result.itemID, name = result.name }, function(results, meta)
-            scan:Enable()
-            if meta.error then
-                info:SetText("Scan fehlgeschlagen: " .. tostring(meta.error))
-                return
-            end
-            AHT.Store:RecordMarket({ itemID = result.itemID, itemKey = result.itemKey, name = result.name }, {
-                kind = meta.kind,
-                minPrice = results[1] and results[1].unitPrice,
-                totalQuantity = meta.totalQuantity,
-                listingCount = meta.listingCount or #results,
-                prices = meta.prices,
-            })
-            info:SetText("Live-Scan gespeichert. Marktansicht wurde aktualisiert.")
-            self:Refresh(true)
-        end)
-    end)
-
-    local remove = Button(dialog, nil, "Überwachung entfernen", 160, 24)
-    remove:SetPoint("LEFT", scan, "RIGHT", 8, 0)
-    remove:SetScript("OnClick", function()
-        if AHT.Store then AHT.Store:RemoveMaterial(result.itemID) end
-        dialog:Hide()
-        self:SetView("materials")
-    end)
-
-    local close = Button(dialog, nil, CLOSE or "Close", 80, 24)
-    close:SetPoint("BOTTOMRIGHT", -12, 12)
-    close:SetScript("OnClick", function() dialog:Hide() end)
 end
 
 function AHT.UI:RefreshStatus()
@@ -1761,7 +1739,7 @@ function AHT.UI:RefreshStatus()
     if self.viewTitle then self.viewTitle:SetText(view.title) end
     local help = self.lastMessage ~= "" and self.lastMessage or view.help
     if self.viewHelp then self.viewHelp:SetText(help) end
-    local scanning = AHT.Scanner and (AHT.Scanner.running or AHT.Scanner.marketDiscovery)
+    local scanning = AHT.Scanner and (AHT.Scanner.running or AHT.Scanner.marketDiscovery or AHT.Scanner.replication)
     self.scanButton:SetText(scanning and "Abbrechen" or "Scannen ▾")
 end
 
@@ -1769,7 +1747,7 @@ function AHT.UI:BuildMaterialRows()
     local rows = {}
     local materials = AHT.DB and AHT.DB.materials or {}
     local market = AHT.DB and AHT.DB.market or {}
-    local inventorySet = self.marketFilter == "inventory" and AHT.Inventory and AHT.Inventory:GetAvailableItemSet() or {}
+    local inventorySet = AHT.Inventory and AHT.Inventory:GetAvailableItemSet() or {}
     local seen = {}
 
     local function AddRow(key, record, material)
@@ -1798,7 +1776,8 @@ function AHT.UI:BuildMaterialRows()
             p25 = snapshot and snapshot.p25,
             p75 = snapshot and snapshot.p75,
             totalQuantity = snapshot and snapshot.totalQuantity or tonumber(record and record.totalQuantity) or 0,
-            listingCount = snapshot and snapshot.listingCount or tonumber(record and record.listingCount) or 0,
+            listingCount = snapshot and snapshot.listingCount,
+            source = snapshot and snapshot.source,
             marketSamples = snapshot and snapshot.marketSamples or 0,
             scanSamples = snapshot and snapshot.scanSamples or 0,
             updatedAt = updatedAt,
@@ -1994,101 +1973,14 @@ function AHT.UI:Refresh(skipCalculator)
         self.selectedResult = selected
         if not selected then self.selectedKey = nil end
     end
+    self.visibleResults = results
     self:EnsureRows(#results)
     self:UpdateHeaders()
-    self.content:SetHeight(math.max(420, #results * ROW_HEIGHT))
-    for index, row in ipairs(self.rows) do
-        local result = results[index]
-        row.result = result
-        if result then
-            local selected = self.selectedKey and ResultKey(result) == self.selectedKey
-            row.bg:SetColorTexture(selected and 0.22 or (index % 2 == 0 and 0.045 or 0.065), selected and 0.13 or 0.032, selected and 0.035 or 0.018, 1)
-            for cellIndex = 1, MAX_COLUMNS do row.cells[cellIndex]:SetTextColor(1, 1, 1) end
-            if result.kind == "info" then
-                row.info:SetText(result.text or "")
-                row.info:Show()
-                for index = 1, MAX_COLUMNS do row.cells[index]:Hide() end
-                row:EnableMouse(true)
-            elseif result.kind == "material" then
-                row.info:Hide()
-                row.cells[1]:SetText((result.isWatched and "★ " or "") .. (result.name or "?"))
-                row.cells[2]:SetText(PriceText(result.currentPrice))
-                row.cells[3]:SetText(PriceText(result.marketValue))
-                row.cells[4]:SetText(PercentText(result.marketTrendPercent))
-                row.cells[5]:SetText(result.updatedText .. " (" .. ScanAgeText(result.updatedAt) .. ")")
-                for index = 1, #MATERIAL_COLUMNS do row.cells[index]:Show() end
-                for index = #MATERIAL_COLUMNS + 1, MAX_COLUMNS do row.cells[index]:Hide() end
-                row.cells[2]:SetTextColor(1, 0.85, 0.4)
-                row.cells[3]:SetTextColor(0.45, 0.85, 1)
-                if result.marketTrendPercent and result.marketTrendPercent < -10 then row.cells[4]:SetTextColor(0.45, 1, 0.55) end
-                row:EnableMouse(true)
-            elseif result.kind == "opportunity" then
-                row.info:Hide()
-                local marker = result.side == "sell" and "▼ Verkaufen: " or "▲ Kaufen: "
-                row.cells[1]:SetText(marker .. (result.name or "?"))
-                row.cells[2]:SetText(AHT:FormatMoneyPlain(result.currentPrice or 0))
-                row.cells[3]:SetText(result.marketValue and AHT:FormatMoneyPlain(result.marketValue) or "-")
-                row.cells[4]:SetText(string.format("%.1f%%", result.discount or 0))
-                row.cells[5]:SetText(result.profit and AHT:FormatMoneyPlain(result.profit) or "-")
-                for index = 1, #OPPORTUNITY_COLUMNS do row.cells[index]:Show() end
-                for index = #OPPORTUNITY_COLUMNS + 1, MAX_COLUMNS do row.cells[index]:Hide() end
-                row.cells[2]:SetTextColor(result.side == "sell" and 1 or 1, result.side == "sell" and 0.65 or 0.85, 0.35)
-                row.cells[4]:SetTextColor(result.side == "sell" and 0.45 or 0.35, 1, 0.45)
-                if result.profit and result.profit > 0 then row.cells[5]:SetTextColor(0.35, 1, 0.35) end
-                row:EnableMouse(true)
-            elseif result.kind == "order" then
-                row.info:Hide()
-                row.cells[1]:SetText(result.name or "?")
-                row.cells[2]:SetText(tostring(result.crafts or 0))
-                row.cells[3]:SetText(result.statusText or "?")
-                row.cells[4]:SetText(tostring(result.remainingCount or 0))
-                row.cells[5]:SetText(AHT:FormatMoneyPlain(result.spent or 0))
-                for index = 1, #ORDER_COLUMNS do row.cells[index]:Show() end
-                for index = #ORDER_COLUMNS + 1, MAX_COLUMNS do row.cells[index]:Hide() end
-                row.cells[3]:SetTextColor(result.order.status == "ready_to_craft" and 0.35 or 1, result.order.status == "ready_to_craft" and 1 or 0.82, 0.35)
-                row:EnableMouse(true)
-            else
-                local profit = result.profit and AHT:FormatMoneyPlain(result.profit) or AHT.L.incomplete
-                local margin = result.margin and string.format("%.1f%%", result.margin) or "-"
-                local cost = result.ingredientCost and AHT:FormatMoneyPlain(result.ingredientCost) or "?"
-                local currentSale = result.currentSalePrice or result.salePrice
-                local currentText = currentSale and AHT:FormatMoneyPlain(currentSale) or "?"
-                local prefix = result.isDeal and "★ " or ""
-                row.info:Hide()
-                row.cells[1]:SetText(prefix .. (result.name or "?"))
-                row.cells[2]:SetText(cost)
-                row.cells[3]:SetText(currentText)
-                row.cells[4]:SetText(profit)
-                row.cells[5]:SetText(margin)
-                for index = 1, #RECIPE_COLUMNS do row.cells[index]:Show() end
-                for index = #RECIPE_COLUMNS + 1, MAX_COLUMNS do row.cells[index]:Hide() end
-                if currentSale and result.marketSalePrice then
-                    if currentSale < result.marketSalePrice then
-                        row.cells[3]:SetTextColor(0.35, 1, 0.45)
-                    elseif currentSale > result.marketSalePrice then
-                        row.cells[3]:SetTextColor(1, 0.55, 0.35)
-                    else
-                        row.cells[3]:SetTextColor(1, 0.85, 0.4)
-                    end
-                else
-                    row.cells[3]:SetTextColor(1, 0.85, 0.4)
-                end
-                if result.profit and result.profit >= 0 then
-                    row.cells[4]:SetTextColor(0.35, 1, 0.35)
-                else
-                    row.cells[4]:SetTextColor(1, 0.45, 0.35)
-                end
-                row:EnableMouse(true)
-            end
-            row:Show()
-        else
-            row.info:SetText("")
-            row.info:Hide()
-            for index = 1, MAX_COLUMNS do row.cells[index]:Hide() end
-            row:Hide()
-        end
-    end
+    self.content:SetHeight(math.max(self.scroll:GetHeight() or 300, #results * ROW_HEIGHT))
+    self:RenderVisibleRows()
+    self:SaveViewState()
     self:RefreshDetail()
+    self:RefreshControls()
     self:RefreshStatus()
 end
 
@@ -2180,482 +2072,6 @@ function AHT.UI:HideAHButton()
         self.ahRecipeStatus = "Auktionshaus geschlossen. Gecachte Listings bleiben sichtbar."
         self:RenderAHRecipePanel()
     end
-end
-
-function AHT.UI:ShowRecipeActions(result)
-    if self.actionDialog then self.actionDialog:Hide() end
-    local template = BackdropTemplateMixin and "BackdropTemplate" or nil
-    local dialog = CreateFrame("Frame", nil, UIParent, template)
-    dialog:SetSize(420, 190)
-    dialog:SetPoint("CENTER")
-    dialog:SetFrameStrata("TOOLTIP")
-    MakeBackdrop(dialog)
-    MakeDialogMovable(dialog)
-    self.actionDialog = dialog
-
-    local title = Label(dialog, result.name or "Rezept", 380)
-    title:SetPoint("TOPLEFT", 14, -14)
-    title:SetFontObject("GameFontHighlightLarge")
-    local detail = Label(dialog, string.format(
-        "Kosten %s | Aktuell %s | Marktwert %s | Gewinn %s | Marge %s\nHover zeigt Zutaten, Bestand, aktuellen Preis und altersgewichteten Durchschnitt.",
-        result.ingredientCost and AHT:FormatMoneyPlain(result.ingredientCost) or "?",
-        (result.currentSalePrice or result.salePrice) and AHT:FormatMoneyPlain(result.currentSalePrice or result.salePrice) or "?",
-        result.marketSalePrice and AHT:FormatMoneyPlain(result.marketSalePrice) or "?",
-        result.profit and AHT:FormatMoneyPlain(result.profit) or "?",
-        result.margin and string.format("%.1f%%", result.margin) or "?"
-    ), 380)
-    detail:SetPoint("TOPLEFT", 14, -46)
-    detail:SetHeight(40)
-
-    local close = Button(dialog, nil, CLOSE or "Close", 80, 24)
-    close:SetPoint("BOTTOMRIGHT", -12, 12)
-    close:SetScript("OnClick", function() dialog:Hide() end)
-
-    local buy = Button(dialog, nil, "Kaufplan", 100, 24)
-    buy:SetPoint("BOTTOMLEFT", 14, 12)
-    buy:SetScript("OnClick", function() self:ShowBuyDialog(result) end)
-
-    local post = Button(dialog, nil, "Postplan", 100, 24)
-    post:SetPoint("LEFT", buy, "RIGHT", 8, 0)
-    post:SetScript("OnClick", function() self:ShowPostDialog(result) end)
-end
-
-function AHT.UI:ShowOpportunityActions(result)
-    if not result then return end
-    if self.actionDialog then self.actionDialog:Hide() end
-    local template = BackdropTemplateMixin and "BackdropTemplate" or nil
-    local dialog = CreateFrame("Frame", nil, UIParent, template)
-    dialog:SetSize(450, 205)
-    dialog:SetPoint("CENTER")
-    dialog:SetFrameStrata("TOOLTIP")
-    MakeBackdrop(dialog)
-    MakeDialogMovable(dialog)
-    self.actionDialog = dialog
-
-    local selling = result.side == "sell"
-    local title = Label(dialog, (selling and "Verkaufschance: " or "Kaufchance: ") .. (result.name or "Marktchance"), 420)
-    title:SetPoint("TOPLEFT", 14, -14)
-    title:SetFontObject("GameFontHighlightLarge")
-    local info = Label(dialog, string.format(
-        "%s %s | Marktwert %s | %s %s pro Stück\n%s %.1f%% | ROI %.1f%% | bevorzugt: %s",
-        selling and "Verkauf" or "Einkauf",
-        AHT:FormatMoneyPlain(result.currentPrice or 0),
-        AHT:FormatMoneyPlain(result.marketValue or 0),
-        selling and "Nettoerlös" or "Netto",
-        AHT:FormatMoneyPlain(result.profit or 0),
-        selling and "Aufschlag" or "Rabatt",
-        result.discount or 0,
-        result.roi or 0,
-        result.bestMethod or "AH"
-    ), 420)
-    info:SetPoint("TOPLEFT", 14, -50)
-    info:SetHeight(60)
-    info:SetJustifyV("TOP")
-
-    local primary
-    if selling then
-        primary = Button(dialog, nil, "Postplan", 105, 24)
-        primary:SetPoint("BOTTOMLEFT", 14, 12)
-        primary:SetScript("OnClick", function()
-            local postResult = result.recipe or {
-                name = result.name,
-                output = { itemID = result.itemID, name = result.name, quantity = 1 },
-                currentSalePrice = result.currentPrice,
-                expectedSalePrice = result.currentPrice,
-                salePrice = result.currentPrice,
-                marketSalePrice = result.marketValue,
-            }
-            self:ShowPostDialog(postResult)
-        end)
-    else
-        primary = Button(dialog, nil, "Als Material überwachen", 165, 24)
-        primary:SetPoint("BOTTOMLEFT", 14, 12)
-        primary:SetScript("OnClick", function()
-            if AHT.Store then AHT.Store:AddMaterial(result.itemID, result.name) end
-            dialog:Hide()
-            self:SetView("materials")
-        end)
-    end
-
-    local scan = Button(dialog, nil, "Neu scannen", 100, 24)
-    scan:SetPoint("LEFT", primary, "RIGHT", 8, 0)
-    scan:SetScript("OnClick", function()
-        if not AHT.AHOpen or not AHT.AH then
-            info:SetText("Das Auktionshaus muss für einen Live-Scan geöffnet sein.")
-            return
-        end
-        scan:Disable()
-        AHT.AH:Search({ itemID = result.itemID, itemKey = result.itemKey, name = result.name }, function(results, meta)
-            scan:Enable()
-            if meta.error then
-                info:SetText("Scan fehlgeschlagen: " .. tostring(meta.error))
-                return
-            end
-            AHT.Store:RecordMarket({ itemID = result.itemID, itemKey = result.itemKey, name = result.name }, {
-                kind = meta.kind,
-                minPrice = results[1] and results[1].unitPrice,
-                totalQuantity = meta.totalQuantity,
-                listingCount = meta.listingCount or #results,
-                prices = meta.prices,
-            })
-            info:SetText("Live-Scan gespeichert. Die Chance wird mit den neuen Daten neu bewertet.")
-            self:Refresh(true)
-        end)
-    end)
-
-    local close = Button(dialog, nil, CLOSE or "Close", 80, 24)
-    close:SetPoint("BOTTOMRIGHT", -12, 12)
-    close:SetScript("OnClick", function() dialog:Hide() end)
-end
-
-local function ProductionOrderText(order, suggestion)
-    local lines = {}
-    if not order then
-        table.insert(lines, string.format(
-            "Empfehlung: %d Herstellvorgänge | Ohne Einkauf herstellbar: %d | Marge: %s",
-            suggestion and suggestion.suggestedCrafts or 0,
-            suggestion and suggestion.craftableFromStock or 0,
-            suggestion and suggestion.margin and string.format("%.1f%%", suggestion.margin) or "?"
-        ))
-        table.insert(lines, "Die Empfehlung ist konservativ und begrenzt die neue Menge auf einen Anteil des aktuell angebotenen Bestands.")
-        return table.concat(lines, "\n")
-    end
-
-    local preview = order.preview
-    if preview then
-        table.insert(lines, string.format(
-            "Marge: %s | Gewinn: %s | Neuer Goldbedarf: %s | Status: %s",
-            preview.margin and string.format("%.1f%%", preview.margin) or "?",
-            preview.profit and AHT:FormatMoneyPlain(preview.profit) or "?",
-            AHT:FormatMoneyPlain(preview.cashCost or 0),
-            tostring(order.status or "?")
-        ))
-    else
-        table.insert(lines, "Status: " .. tostring(order.status or "geplant"))
-    end
-    table.insert(lines, " ")
-    table.insert(lines, "Zutat | Tasche | Bank | reserviert | zugeteilt | noch kaufen")
-    for _, requirement in ipairs(order.requirements or {}) do
-        local remaining = math.max(0, (tonumber(requirement.toBuy) or 0) - (tonumber(requirement.bought) or 0))
-        local bankText = requirement.bankKnown and tostring(requirement.bank or 0) or "?"
-        table.insert(lines, string.format(
-            "%dx %s | Tasche %d | Bank %s | anderweitig reserviert %d | diesem Auftrag zugeteilt %d | noch kaufen %d",
-            requirement.required or 0,
-            requirement.name or tostring(requirement.itemID),
-            requirement.bags or 0,
-            bankText,
-            requirement.reservedOther or 0,
-            requirement.ownedAllocated or 0,
-            remaining
-        ))
-        if (requirement.bought or 0) > 0 then
-            table.insert(lines, string.format("   bereits gekauft: %d für %s", requirement.bought, AHT:FormatMoneyPlain(requirement.spent or 0)))
-        end
-        if requirement.error then table.insert(lines, "   Problem: " .. tostring(requirement.error)) end
-    end
-    return table.concat(lines, "\n")
-end
-
-function AHT.UI:ShowBuyDialog(result, existingOrder)
-    if self.actionDialog then self.actionDialog:Hide() end
-    if self.buyDialog then self.buyDialog:Hide() end
-    if not AHT.Production or not result or #(result.reagents or {}) == 0 then
-        AHT:Print("Dieses Rezept hat keine kaufbaren Zutaten.")
-        return
-    end
-
-    local suggestion = AHT.Production:Suggest(result)
-    local template = BackdropTemplateMixin and "BackdropTemplate" or nil
-    local dialog = CreateFrame("Frame", nil, UIParent, template)
-    dialog:SetSize(700, 500)
-    dialog:SetPoint("CENTER")
-    dialog:SetFrameStrata("TOOLTIP")
-    MakeBackdrop(dialog)
-    MakeDialogMovable(dialog)
-    self.buyDialog = dialog
-    dialog.result = result
-    dialog.order = existingOrder
-
-    local title = Label(dialog, "Herstellungs- und Einkaufsplan: " .. (result.name or "?"), 660)
-    title:SetPoint("TOPLEFT", 16, -16)
-    title:SetFontObject("GameFontHighlightLarge")
-
-    local quantityLabel = Label(dialog, "Herstellvorgänge:", 130)
-    quantityLabel:SetPoint("TOPLEFT", 16, -55)
-    local quantity = CreateFrame("EditBox", nil, dialog, "InputBoxTemplate")
-    quantity:SetSize(70, 24)
-    quantity:SetPoint("LEFT", quantityLabel, "RIGHT", 8, 0)
-    quantity:SetAutoFocus(false)
-    quantity:SetNumeric(true)
-    quantity:SetText(tostring(existingOrder and existingOrder.crafts or math.max(1, suggestion.suggestedCrafts or 1)))
-    if existingOrder then DisableInput(quantity) end
-
-    local info = Label(dialog, "", 660)
-    info:SetPoint("TOPLEFT", 16, -92)
-    info:SetHeight(330)
-    info:SetJustifyV("TOP")
-    info:SetText(ProductionOrderText(dialog.order, suggestion))
-
-    local action = Button(dialog, nil, "Autokauf starten", 155, 26)
-    action:SetPoint("BOTTOMLEFT", 16, 14)
-    action:Disable()
-
-    local preview = Button(dialog, nil, existingOrder and "Preise neu prüfen" or "Plan prüfen", 135, 26)
-    preview:SetPoint("LEFT", action, "RIGHT", 8, 0)
-
-    local cancelOrder = Button(dialog, nil, "Auftrag stornieren", 140, 26)
-    cancelOrder:SetPoint("LEFT", preview, "RIGHT", 8, 0)
-    if not existingOrder then cancelOrder:Disable() end
-
-    local close = Button(dialog, nil, CLOSE or "Close", 90, 26)
-    close:SetPoint("BOTTOMRIGHT", -14, 14)
-
-    local function Render()
-        info:SetText(ProductionOrderText(dialog.order, suggestion))
-        if not dialog.order then
-            action:Disable()
-            return
-        end
-        cancelOrder:Enable()
-        local status = dialog.order.status
-        if status == "awaiting_purchase" then
-            action:SetText("Kauf auslösen")
-            action:Enable()
-        elseif status == "awaiting_confirmation" then
-            action:SetText("Kauf bestätigen")
-            action:Enable()
-        elseif status == "ready_to_craft" then
-            action:SetText("Einkauf fertig")
-            action:Disable()
-        elseif status == "previewing" or status == "checking" or status == "buying" or status == "submitted" then
-            action:SetText("Bitte warten…")
-            action:Disable()
-        elseif dialog.order.preview and dialog.order.preview.complete and dialog.order.preview.meetsMargin then
-            action:SetText(status == "next_ready" and "Nächste Zutat" or "Autokauf starten")
-            action:Enable()
-        else
-            action:SetText("Autokauf starten")
-            action:Disable()
-        end
-    end
-
-    local function PurchaseCallback(state, data)
-        Render()
-        if state == "price" then
-            local purchase = data.purchase
-            info:SetText(ProductionOrderText(dialog.order, suggestion) .. string.format(
-                "\n\nLive-Preis für %s: %s pro Stück, gesamt %s. Bitte bestätigen.",
-                data.requirement.name or "Zutat",
-                AHT:FormatMoneyPlain(purchase.unitPrice or 0),
-                AHT:FormatMoneyPlain(purchase.totalPrice or 0)
-            ))
-        elseif state == "error" then
-            info:SetText(ProductionOrderText(dialog.order, suggestion) .. "\n\nFehler: " .. tostring(data))
-        end
-        if self.viewMode == "orders" then self:Refresh(true) end
-    end
-
-    preview:SetScript("OnClick", function()
-        if not dialog.order then
-            local order, errorMessage = AHT.Production:CreateOrder(result, tonumber(quantity:GetText()) or 1)
-            if not order then info:SetText("Fehler: " .. tostring(errorMessage)) return end
-            dialog.order = order
-            DisableInput(quantity)
-            cancelOrder:Enable()
-        end
-        dialog.order.status = "previewing"
-        Render()
-        preview:Disable()
-        AHT.Production:PreviewOrder(dialog.order, function(order, errorMessage)
-            preview:Enable()
-            if errorMessage then
-                Render()
-                info:SetText("Preisprüfung fehlgeschlagen: " .. tostring(errorMessage))
-                return
-            end
-            dialog.order = order
-            Render()
-        end)
-    end)
-
-    action:SetScript("OnClick", function()
-        if not dialog.order then return end
-        if AHT.Buyer and AHT.Buyer.pending and AHT.Buyer.pending.state == "ready_to_buy" then
-            action:Disable()
-            action:SetText("Kauf wird ausgelöst…")
-            if not AHT.Production:StartCurrentPurchase() then
-                Render()
-                info:SetText(ProductionOrderText(dialog.order, suggestion) .. "\n\nFehler: Kauf konnte nicht ausgelöst werden. Bitte den Plan erneut prüfen.")
-            end
-            return
-        end
-        if AHT.Buyer and AHT.Buyer.pending and AHT.Buyer.pending.state == "awaiting_user_confirmation" then
-            action:Disable()
-            action:SetText("Kauf läuft…")
-            if not AHT.Production:ConfirmCurrentCommodity() then
-                Render()
-                info:SetText(ProductionOrderText(dialog.order, suggestion) .. "\n\nFehler: Commodity-Kauf konnte nicht bestätigt werden.")
-            end
-            return
-        end
-        action:Disable()
-        local ok, errorMessage
-        if dialog.order.status == "ready" then
-            ok, errorMessage = AHT.Production:Start(dialog.order, PurchaseCallback)
-        else
-            ok, errorMessage = AHT.Production:Continue(dialog.order, PurchaseCallback)
-        end
-        if not ok then
-            Render()
-            info:SetText(ProductionOrderText(dialog.order, suggestion) .. "\n\nFehler: " .. tostring(errorMessage))
-        end
-    end)
-
-    cancelOrder:SetScript("OnClick", function()
-        if dialog.order and AHT.Production:CancelOrder(dialog.order) then
-            dialog:Hide()
-            self:SetView("orders")
-        end
-    end)
-
-    close:SetScript("OnClick", function()
-        if AHT.Buyer and AHT.Buyer.pending then AHT.Buyer:Cancel("dialog_closed") end
-        dialog:Hide()
-    end)
-
-    Render()
-    dialog:Show()
-end
-
-function AHT.UI:ShowOrderActions(order)
-    if not order then return end
-    local template = BackdropTemplateMixin and "BackdropTemplate" or nil
-    local dialog = CreateFrame("Frame", nil, UIParent, template)
-    dialog:SetSize(480, 230)
-    dialog:SetPoint("CENTER")
-    dialog:SetFrameStrata("TOOLTIP")
-    MakeBackdrop(dialog)
-    MakeDialogMovable(dialog)
-
-    local title = Label(dialog, order.name or "Herstellungsauftrag", 440)
-    title:SetPoint("TOPLEFT", 14, -14)
-    title:SetFontObject("GameFontHighlightLarge")
-    local info = Label(dialog, ProductionOrderText(order), 440)
-    info:SetPoint("TOPLEFT", 14, -48)
-    info:SetHeight(110)
-    info:SetJustifyV("TOP")
-
-    local open = Button(dialog, nil, "Öffnen", 100, 24)
-    open:SetPoint("BOTTOMLEFT", 14, 12)
-    open:SetScript("OnClick", function()
-        local result = AHT.Production:ResultFromOrder(order)
-        dialog:Hide()
-        if result then self:ShowBuyDialog(result, order) end
-    end)
-
-    local completed = Button(dialog, nil, "Hergestellt", 110, 24)
-    completed:SetPoint("LEFT", open, "RIGHT", 8, 0)
-    completed:SetScript("OnClick", function()
-        AHT.Production:CompleteOrder(order)
-        dialog:Hide()
-        self:Refresh(true)
-    end)
-
-    local cancel = Button(dialog, nil, "Stornieren", 100, 24)
-    cancel:SetPoint("LEFT", completed, "RIGHT", 8, 0)
-    cancel:SetScript("OnClick", function()
-        AHT.Production:CancelOrder(order)
-        dialog:Hide()
-        self:Refresh(true)
-    end)
-
-    local close = Button(dialog, nil, CLOSE or "Close", 80, 24)
-    close:SetPoint("BOTTOMRIGHT", -12, 12)
-    close:SetScript("OnClick", function() dialog:Hide() end)
-end
-
-function AHT.UI:ShowPostDialog(result)
-    if self.actionDialog then self.actionDialog:Hide() end
-    if self.postDialog then self.postDialog:Hide() end
-    local template = BackdropTemplateMixin and "BackdropTemplate" or nil
-    local dialog = CreateFrame("Frame", nil, UIParent, template)
-    dialog:SetSize(430, 230)
-    dialog:SetPoint("CENTER")
-    dialog:SetFrameStrata("TOOLTIP")
-    MakeBackdrop(dialog)
-    MakeDialogMovable(dialog)
-    self.postDialog = dialog
-
-    local title = Label(dialog, "Postplan: " .. (result.name or "?"), 400)
-    title:SetPoint("TOPLEFT", 14, -14)
-    title:SetFontObject("GameFontHighlightLarge")
-    local recommendation = AHT.Poster and AHT.Poster:RecommendPrice(result) or nil
-    local suggestedPrice = recommendation and recommendation.recommendedPrice or result.expectedSalePrice or result.salePrice or 0
-    local info = Label(dialog, "Bestand, Deposit und Preis werden vor dem Posten geprüft.", 400)
-    info:SetPoint("TOPLEFT", 14, -48)
-    info:SetHeight(45)
-
-    local quantityLabel = Label(dialog, "Menge:", 82)
-    quantityLabel:SetPoint("TOPLEFT", 14, -101)
-    local quantity = CreateFrame("EditBox", nil, dialog, "InputBoxTemplate")
-    quantity:SetSize(70, 24)
-    quantity:SetPoint("LEFT", quantityLabel, "RIGHT", 8, 0)
-    quantity:SetAutoFocus(false)
-    quantity:SetNumeric(true)
-    quantity:SetText("1")
-
-    local priceLabel = Label(dialog, "Preis/Stk (Kupfer):", 108)
-    priceLabel:SetPoint("TOPLEFT", 190, -101)
-    local price = CreateFrame("EditBox", nil, dialog, "InputBoxTemplate")
-    price:SetSize(100, 24)
-    price:SetPoint("LEFT", priceLabel, "RIGHT", 8, 0)
-    price:SetAutoFocus(false)
-    price:SetNumeric(true)
-    price:SetText(tostring(suggestedPrice))
-
-    if recommendation then
-        info:SetText(string.format(
-            "Empfehlung %s | Marktwert %s | P25–P75 %s–%s | %d Tag(e) Historie",
-            AHT:FormatMoneyPlain(recommendation.recommendedPrice or 0),
-            AHT:FormatMoneyPlain(recommendation.marketValue or 0),
-            AHT:FormatMoneyPlain(recommendation.p25 or 0),
-            AHT:FormatMoneyPlain(recommendation.p75 or 0),
-            recommendation.samples or 0
-        ))
-    end
-
-    local confirm = Button(dialog, nil, "Posten", 100, 24)
-    confirm:SetPoint("BOTTOMLEFT", 14, 12)
-    confirm:Disable()
-
-    local preview = Button(dialog, nil, "Vorschau", 100, 24)
-    preview:SetPoint("LEFT", price, "RIGHT", 8, 0)
-    preview:SetScript("OnClick", function()
-        local plan, errorMessage = AHT.Poster:BuildPlan(result, tonumber(quantity:GetText()) or 1, 2, tonumber(price:GetText()) or 0)
-        if not plan then info:SetText("Fehler: " .. tostring(errorMessage)) return end
-        dialog.plan = plan
-        info:SetText(string.format("Menge %d | Stückpreis %s | Deposit %s", plan.quantity, AHT:FormatMoneyPlain(plan.unitPrice), AHT:FormatMoneyPlain(plan.deposit)))
-        confirm:Enable()
-    end)
-
-    confirm:SetScript("OnClick", function()
-        local freshPlan, errorMessage = AHT.Poster:BuildPlan(
-            result,
-            tonumber(quantity:GetText()) or 1,
-            2,
-            tonumber(price:GetText()) or 0
-        )
-        if not freshPlan then
-            info:SetText("Fehler: " .. tostring(errorMessage))
-            return
-        end
-        dialog.plan = freshPlan
-        if AHT.Poster:Post(freshPlan) then dialog:Hide() end
-    end)
-    local close = Button(dialog, nil, CLOSE or "Close", 80, 24)
-    close:SetPoint("BOTTOMRIGHT", -12, 12)
-    close:SetScript("OnClick", function() dialog:Hide() end)
-    dialog:Show()
 end
 
 function AHT.UI:ShowMaterials()
