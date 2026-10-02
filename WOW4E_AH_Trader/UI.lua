@@ -577,6 +577,7 @@ function AHT.UI:Create()
     self.scanMenu:SetPoint("TOPRIGHT", self.scanButton, "BOTTOMRIGHT", 0, -4)
     self.scanMenu:SetFrameStrata("TOOLTIP")
     MakeBackdrop(self.scanMenu)
+    self.scanMenu:Hide()
     self.scanOptions = {
         { label = "Bekannte Items", action = function() AHT.Scanner:Start(nil, "known") end },
         { label = "Ganzer AH-Markt", action = function() AHT.Scanner:StartMarketDiscovery() end },
@@ -2026,6 +2027,7 @@ function AHT.UI:Show()
     if not self.frame then self:Create() end
     self:RestoreFrameStrata()
     AHT:Refresh()
+    if self.scanMenu then self.scanMenu:Hide() end
     self.frame:Show()
     self:HideDatabaseRecovery()
     return true
