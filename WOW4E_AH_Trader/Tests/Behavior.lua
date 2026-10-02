@@ -137,6 +137,32 @@ test("search changes coalesce into one refresh", function()
     AHT.UI.searchInput:SetText("a"); AHT.UI.searchInput:SetText("ab"); AHT.UI.searchInput:SetText("abc"); TEST.Flush()
     equal(count, 1); AHT.UI.Refresh = original; AHT.UI.searchInput:SetText(""); TEST.Flush()
 end)
+test("recipe detail data is rendered in aligned metric and ingredient columns", function()
+    local ui = AHT.UI
+    local oldFrame, oldPanel, oldContent, oldScroll = ui.frame, ui.detailPanel, ui.detailContent, ui.detailScroll
+    local oldTitle, oldAction, oldSearch, oldRows, oldSelection = ui.detailTitle, ui.detailAction, ui.detailSearch, ui.detailRows, ui.selectedResult
+    ui.frame = CreateFrame("Frame", nil, UIParent); ui.frame:SetWidth(780)
+    ui.detailPanel = CreateFrame("Frame", nil, ui.frame)
+    ui.detailScroll = CreateFrame("ScrollFrame", nil, ui.detailPanel)
+    ui.detailContent = CreateFrame("Frame", nil, ui.detailScroll)
+    ui.detailTitle = CreateFrame("FontString", nil, ui.detailPanel)
+    ui.detailAction = CreateFrame("Button", nil, ui.detailPanel)
+    ui.detailSearch = CreateFrame("Button", nil, ui.detailPanel)
+    ui.detailRows = {}
+    ui.selectedResult = {
+        name = "Testtrank", output = { itemID = 100 }, ingredientCost = 40, currentSalePrice = 90,
+        marketSalePrice = 85, profit = 30, margin = 75, suggestedCrafts = 2,
+        reagents = { { itemID = 200, quantity = 3, name = "Testkraut" } },
+    }
+    ui:RefreshDetail()
+    equal(ui.detailRows[1].cells[1]:GetText(), "Kennzahl")
+    equal(ui.detailRows[2].cells[1]:GetText(), "Kosten/Stk")
+    equal(ui.detailRows[8].cells[1]:GetText(), "Zutat")
+    equal(ui.detailRows[9].cells[1]:GetText(), "Testkraut")
+    equal(ui.detailRows[9].cells[2]:GetText(), "6")
+    ui.frame, ui.detailPanel, ui.detailContent, ui.detailScroll = oldFrame, oldPanel, oldContent, oldScroll
+    ui.detailTitle, ui.detailAction, ui.detailSearch, ui.detailRows, ui.selectedResult = oldTitle, oldAction, oldSearch, oldRows, oldSelection
+end)
 test("recipe AH search submits the visible search instead of stopping at QueryItem", function()
     local previousFrame, previousContext = _G.AuctionHouseFrame, _G.AuctionHouseSearchContext
     local calls = { start = 0, queryItem = 0 }

@@ -150,6 +150,10 @@ local ORDER_COLUMNS = {
 local TABLE_WIDTH = 700
 local ROW_HEIGHT = 23
 local MAX_COLUMNS = 10
+local DETAIL_ROW_HEIGHT = 18
+local DETAIL_PAIR_WIDTHS = { 0.25, 0.25, 0.25, 0.25 }
+local DETAIL_INGREDIENT_WIDTHS = { 0.42, 0.14, 0.19, 0.25 }
+local DETAIL_ORDER_WIDTHS = { 0.40, 0.18, 0.20, 0.22 }
 
 local function HeaderButton(parent, text, width)
     local button = CreateFrame("Button", nil, parent)
@@ -738,7 +742,7 @@ function AHT.UI:Create()
     local scrollTemplate = "UIPanelScrollFrameTemplate"
     self.scroll = CreateFrame("ScrollFrame", nil, self.frame, scrollTemplate)
     self.scroll:SetPoint("TOPLEFT", 18, -202)
-    self.scroll:SetPoint("BOTTOMRIGHT", -34, 140)
+    self.scroll:SetPoint("BOTTOMRIGHT", -34, 174)
     self.content = CreateFrame("Frame", nil, self.scroll)
     self.content:SetSize(TABLE_WIDTH, 420)
     self.scroll:SetScrollChild(self.content)
@@ -746,25 +750,21 @@ function AHT.UI:Create()
     self.detailPanel = CreateFrame("Frame", nil, self.frame, template)
     self.detailPanel:SetPoint("BOTTOMLEFT", 18, 10)
     self.detailPanel:SetPoint("BOTTOMRIGHT", -34, 10)
-    self.detailPanel:SetHeight(118)
+    self.detailPanel:SetHeight(152)
     self.detailPanel:SetFrameLevel(self.frame:GetFrameLevel() + 2)
     MakeBackdrop(self.detailPanel)
-    self.detailTitle = Label(self.detailPanel, "Auswahl", 450)
+    self.detailTitle = Label(self.detailPanel, "Auswahl")
     self.detailTitle:SetPoint("TOPLEFT", 10, -7)
+    self.detailTitle:SetPoint("TOPRIGHT", self.detailPanel, "TOPRIGHT", -282, -7)
     self.detailTitle:SetFontObject("GameFontHighlight")
     self.detailTitle:SetTextColor(1, 0.84, 0.35)
     self.detailScroll = CreateFrame("ScrollFrame", nil, self.detailPanel, "UIPanelScrollFrameTemplate")
     self.detailScroll:SetPoint("TOPLEFT", 10, -28)
     self.detailScroll:SetPoint("BOTTOMRIGHT", -282, 10)
     self.detailContent = CreateFrame("Frame", nil, self.detailScroll)
-    self.detailContent:SetSize(440, 82)
+    self.detailContent:SetSize(math.max(360, self.frame:GetWidth() - 364), 82)
     self.detailScroll:SetScrollChild(self.detailContent)
-    self.detailSummary = Label(self.detailContent, "Klicke ein Item für Preis, Verlauf, Zutaten und Bestand.", 440)
-    self.detailSummary:SetPoint("TOPLEFT", 0, 0)
-    self.detailSummary:SetHeight(82)
-    self.detailSummary:SetJustifyV("TOP")
-    if self.detailSummary.SetWordWrap then self.detailSummary:SetWordWrap(true) end
-    self.detailSummary:SetTextColor(0.85, 0.82, 0.74)
+    self.detailRows = {}
     self.detailAction = Button(self.detailPanel, nil, "Kaufplan", 118, 25)
     self.detailAction:SetPoint("RIGHT", -130, 0)
     self.detailAction:SetScript("OnClick", function()
@@ -782,7 +782,10 @@ function AHT.UI:Create()
     end)
 
     self.scroll:HookScript("OnVerticalScroll", function() self:RenderVisibleRows() end)
-    self.frame:SetScript("OnSizeChanged", function() if self.content then self:RequestRefresh() end end)
+    self.frame:SetScript("OnSizeChanged", function()
+        if self.content then self:RequestRefresh() end
+        if self.detailRows then self:RefreshDetail() end
+    end)
     self:CreateRows()
     self:RestoreViewState(self.viewMode)
     self:RefreshControls()
@@ -1522,64 +1525,175 @@ function AHT.UI:SelectResult(result)
     end
 end
 
+function AHT.UI:RenderDetailRows(rows)
+    local frameWidth = self.frame and self.frame:GetWidth() or 780
+    local width = math.max(360, frameWidth - 364)
+    local height = math.max(DETAIL_ROW_HEIGHT, #rows * DETAIL_ROW_HEIGHT)
+    self.detailContent:SetSize(width, height)
+
+    for index, rowData in ipairs(rows) do
+        local row = self.detailRows[index]
+        if not row then
+            row = CreateFrame("Frame", nil, self.detailContent)
+            row.bg = row:CreateTexture(nil, "BACKGROUND")
+            row.bg:SetAllPoints(row)
+            row.rule = row:CreateTexture(nil, "BORDER")
+            row.rule:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 0, 0)
+            row.rule:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", 0, 0)
+            row.rule:SetHeight(1)
+            row.cells = {}
+            for column = 1, 4 do
+                row.cells[column] = row:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+            end
+            self.detailRows[index] = row
+        end
+
+        row:ClearAllPoints()
+        row:SetPoint("TOPLEFT", self.detailContent, "TOPLEFT", 0, -((index - 1) * DETAIL_ROW_HEIGHT))
+        row:SetSize(width, DETAIL_ROW_HEIGHT)
+        row:Show()
+
+        if rowData.kind == "header" then
+            row.bg:SetColorTexture(0.18, 0.11, 0.035, 1)
+            row.rule:SetColorTexture(0.85, 0.58, 0.18, 0.9)
+        elseif rowData.kind == "section" then
+            row.bg:SetColorTexture(0.12, 0.08, 0.025, 1)
+            row.rule:SetColorTexture(0.48, 0.32, 0.1, 0.8)
+        else
+            local shade = index % 2 == 0 and 0.055 or 0.035
+            row.bg:SetColorTexture(shade, shade * 0.78, shade * 0.5, 0.95)
+            row.rule:SetColorTexture(0.25, 0.19, 0.1, 0.55)
+        end
+
+        local values = rowData.values or {}
+        local widths = rowData.widths or DETAIL_PAIR_WIDTHS
+        local offset = 0
+        for column, cell in ipairs(row.cells) do
+            cell:ClearAllPoints()
+            cell:SetHeight(DETAIL_ROW_HEIGHT)
+            if cell.SetWordWrap then cell:SetWordWrap(false) end
+            if rowData.kind == "section" or rowData.kind == "message" then
+                if column == 1 then
+                    cell:SetPoint("LEFT", row, "LEFT", 7, 0)
+                    cell:SetWidth(width - 14)
+                else
+                    cell:SetPoint("LEFT", row, "LEFT", width, 0)
+                    cell:SetWidth(1)
+                end
+            else
+                local columnWidth = width * (widths[column] or 0.25)
+                cell:SetPoint("LEFT", row, "LEFT", offset + 6, 0)
+                cell:SetWidth(math.max(1, columnWidth - 12))
+                local leftAligned = rowData.kind == "header" or column == 1 or (rowData.kind == "metric" and column == 3)
+                cell:SetJustifyH(leftAligned and "LEFT" or "RIGHT")
+                offset = offset + columnWidth
+            end
+
+            cell:SetText(values[column] or "")
+            if rowData.kind == "header" or rowData.kind == "section" then
+                cell:SetFontObject("GameFontHighlightSmall")
+                cell:SetTextColor(1, 0.84, 0.35)
+            elseif rowData.kind == "message" then
+                cell:SetFontObject("GameFontNormalSmall")
+                cell:SetTextColor(0.85, 0.82, 0.74)
+            elseif column == 2 or column == 4 then
+                cell:SetFontObject("GameFontHighlightSmall")
+                cell:SetTextColor(0.92, 0.89, 0.8)
+            else
+                cell:SetFontObject("GameFontNormalSmall")
+                cell:SetTextColor(0.78, 0.72, 0.59)
+            end
+        end
+    end
+
+    for index = #rows + 1, #self.detailRows do
+        self.detailRows[index]:Hide()
+    end
+    self.detailScroll:SetVerticalScroll(0)
+end
+
 function AHT.UI:RefreshDetail()
     if not self.detailPanel then return end
     local result = self.selectedResult
     if not result then
         self.detailTitle:SetText("Auswahl")
-        self.detailSummary:SetText("Klicke ein Item für Preise, Verlauf, Zutaten und Bestand. Aktionen sind rechts beschriftet.")
+        self:RenderDetailRows({ { kind = "message", values = { "Wähle einen Eintrag für Preise, Marktverlauf, Zutaten und Bestand." } } })
         self.detailAction:Disable()
         self.detailSearch:Hide()
         return
     end
 
-    local lines = {}
+    local metrics, extraRows = {}, {}
     local searchable = false
+    local function AddMetric(label, value)
+        table.insert(metrics, { label, tostring(value or "-") })
+    end
+
     if result.kind == "material" then
         local counts = AHT.Inventory and AHT.Inventory:GetCount(result.itemID) or { bags = 0, bank = 0, bankKnown = false }
-        table.insert(lines, string.format("Aktuell %s  |  Marktwert %s  |  Ø %s  |  Abweichung %s",
-            PriceText(result.currentPrice), PriceText(result.marketValue), PriceText(result.averagePrice), PercentText(result.marketTrendPercent)))
-        table.insert(lines, string.format("Seit letztem Scan %s  |  %s Listings / %s Stück  |  Tasche %d, Bank %s  |  %s",
-            PercentText(result.priceChangePercent), tostring(result.listingCount or "?"), tostring(result.totalQuantity or "?"),
-            counts.bags or 0, counts.bankKnown and tostring(counts.bank or 0) or "?", ScanAgeText(result.updatedAt)))
+        AddMetric("Aktuell", PriceText(result.currentPrice))
+        AddMetric("Marktwert", PriceText(result.marketValue))
+        AddMetric("Ø AH", PriceText(result.averagePrice))
+        AddMetric("Abweichung", PercentText(result.marketTrendPercent))
+        AddMetric("Änderung", PercentText(result.priceChangePercent))
+        AddMetric("Listings", result.listingCount or "?")
+        AddMetric("Angebot", result.totalQuantity or "?")
+        AddMetric("Tasche/Bank", string.format("%d / %s", counts.bags or 0, counts.bankKnown and tostring(counts.bank or 0) or "?"))
+        AddMetric("Scanalter", ScanAgeText(result.updatedAt))
         self.detailAction:SetText("Aktionen")
         searchable = true
     elseif result.kind == "opportunity" then
         local direction = result.side == "sell" and "Verkauf" or "Kauf"
-        table.insert(lines, string.format("%s-Chance  |  Aktuell %s  |  Marktwert %s  |  Vorteil %s  |  Netto %s  |  ROI %s",
-            direction, PriceText(result.currentPrice), PriceText(result.marketValue), PercentText(result.discount),
-            PriceText(result.profit or result.netIncome), PercentText(result.roi)))
-        table.insert(lines, string.format("Angebotsmenge %d  |  Historische Samples %d  |  %s",
-            result.quantity or 0, result.sampleCount or result.marketSamples or 0, ScanAgeText(result.updatedAt)))
+        AddMetric("Richtung", direction)
+        AddMetric("Aktuell", PriceText(result.currentPrice))
+        AddMetric("Marktwert", PriceText(result.marketValue))
+        AddMetric("Vorteil", PercentText(result.discount))
+        AddMetric("Netto", PriceText(result.profit or result.netIncome))
+        AddMetric("ROI", PercentText(result.roi))
+        AddMetric("Angebot", result.quantity or 0)
+        AddMetric("Samples", result.sampleCount or result.marketSamples or 0)
+        AddMetric("Scanalter", ScanAgeText(result.updatedAt))
         self.detailAction:SetText(result.side == "sell" and "Verkaufsplan" or "Kaufchance")
         searchable = result.itemID ~= nil
     elseif result.kind == "order" then
         local order = result.order or {}
-        local requirements = {}
-        for index, requirement in ipairs(order.requirements or {}) do
-            if index >= 1 then
+        AddMetric("Vorgänge", result.crafts or 0)
+        AddMetric("Status", result.statusText or "?")
+        AddMetric("Offen", result.remainingCount or 0)
+        AddMetric("Ausgegeben", PriceText(result.spent or 0))
+        if #(order.requirements or {}) > 0 then
+            table.insert(extraRows, { kind = "section", values = { "EINKAUFSMATERIALIEN" } })
+            table.insert(extraRows, { kind = "header", values = { "Material", "Gekauft", "Zu kaufen", "Ausgegeben" }, widths = DETAIL_ORDER_WIDTHS })
+            for _, requirement in ipairs(order.requirements) do
                 local itemName = requirement.name or AHT:GetItemInfo(requirement.itemID) or tostring(requirement.itemID)
-                table.insert(requirements, string.format("%s: %d/%d", itemName,
-                    requirement.bought or 0, requirement.toBuy or requirement.quantity or 0))
+                table.insert(extraRows, {
+                    kind = "ingredient",
+                    widths = DETAIL_ORDER_WIDTHS,
+                    values = { itemName, requirement.bought or 0, requirement.toBuy or requirement.quantity or 0, PriceText(requirement.spent or 0) },
+                })
             end
         end
-        table.insert(lines, string.format("%d Herstellvorgänge  |  Status: %s  |  Offen: %d  |  Ausgegeben: %s",
-            result.crafts or 0, result.statusText or "?", result.remainingCount or 0, PriceText(result.spent or 0)))
-        if #requirements > 0 then table.insert(lines, table.concat(requirements, "  •  ")) end
         self.detailAction:SetText("Auftrag öffnen")
     else
         local output = result.output or {}
         local snapshot = result.marketSnapshot or (output.itemID and AHT.Store:GetMarketSnapshot(output.itemID))
         local sale = result.currentSalePrice or result.salePrice
-        table.insert(lines, string.format("Kosten %s  |  Aktueller Verkauf %s  |  Marktwert %s  |  Netto %s  |  Marge %s  |  Vorschlag %d Herstellvorgänge",
-            PriceText(result.ingredientCost), PriceText(sale), PriceText(result.marketSalePrice), PriceText(result.profit),
-            result.margin and string.format("%.1f%%", result.margin) or "-", result.suggestedCrafts or 0))
-        table.insert(lines, string.format("Seit letztem Scan %s  |  Abweichung %s  |  %s",
-            PercentText(snapshot and snapshot.priceChangePercent), PercentText(snapshot and snapshot.trendPercent), ScanAgeText(snapshot and snapshot.updatedAt)))
-        local ingredients = {}
+        AddMetric("Kosten/Stk", PriceText(result.ingredientCost))
+        AddMetric("Aktuell/Stk", PriceText(sale))
+        AddMetric("Marktwert", PriceText(result.marketSalePrice))
+        AddMetric("Ø AH", PriceText(snapshot and snapshot.averagePrice))
+        AddMetric("Netto/Stk", PriceText(result.profit))
+        AddMetric("Marge", result.margin and string.format("%.1f%%", result.margin) or "-")
+        AddMetric("Änderung", PercentText(snapshot and snapshot.priceChangePercent))
+        AddMetric("Trend", PercentText(snapshot and snapshot.trendPercent))
+        AddMetric("Vorschlag", string.format("%d Vorgänge", result.suggestedCrafts or 0))
+        AddMetric("Scanalter", ScanAgeText(snapshot and snapshot.updatedAt))
+
         local crafts = math.max(1, tonumber(result.suggestedCrafts) or 0)
-        for index, reagent in ipairs(result.reagents or {}) do
-            if index >= 1 then
+        if #(result.reagents or {}) > 0 then
+            table.insert(extraRows, { kind = "section", values = { string.format("ZUTATEN | %d Vorgänge | T/B Tasche/Bank | R/F reserviert/fehlt", crafts) } })
+            table.insert(extraRows, { kind = "header", values = { "Zutat", "Bedarf", "AH/Stk", "T/B • R/F" }, widths = DETAIL_INGREDIENT_WIDTHS })
+            for _, reagent in ipairs(result.reagents) do
                 local quantity = (tonumber(reagent.quantity) or 1) * crafts
                 local itemName = reagent.name or AHT:GetItemInfo(reagent.itemID) or tostring(reagent.itemID)
                 local price = AHT.Store and AHT.Store:GetPrice(reagent.itemID)
@@ -1588,26 +1702,30 @@ function AHT.UI:RefreshDetail()
                 local knownStock = (count.bags or 0) + (count.bankKnown and (count.bank or 0) or 0)
                 local available = math.max(0, knownStock - reserved)
                 local missing = available >= quantity and 0 or count.bankKnown and (quantity - available) or "?"
-                table.insert(ingredients, string.format("%dx %s @ %s [T%d/B%s, reserviert %d, fehlen %s]", quantity, itemName, PriceText(price),
-                    count.bags or 0, count.bankKnown and tostring(count.bank or 0) or "?", reserved, tostring(missing)))
+                local stockText = string.format("%d/%s • %d/%s", count.bags or 0,
+                    count.bankKnown and tostring(count.bank or 0) or "?", reserved, tostring(missing))
+                table.insert(extraRows, {
+                    kind = "ingredient",
+                    widths = DETAIL_INGREDIENT_WIDTHS,
+                    values = { itemName, quantity, PriceText(price), stockText },
+                })
             end
-        end
-        if #ingredients > 0 then
-            local extra = math.max(0, #(result.reagents or {}) - #ingredients)
-            local craftLabel = crafts == 1 and "1 Herstellvorgang" or string.format("%d Herstellvorgänge", crafts)
-            table.insert(lines, string.format("Zutaten für %s: %s%s", craftLabel, table.concat(ingredients, "  •  "),
-                extra > 0 and string.format("  +%d weitere", extra) or ""))
         else
-            table.insert(lines, "Zutaten und Einkaufspreise sind noch nicht vollständig erfasst.")
+            table.insert(extraRows, { kind = "message", values = { "Zutaten und Einkaufspreise sind noch nicht vollständig erfasst." } })
         end
         self.detailAction:SetText("Einkauf planen")
         searchable = output.itemID ~= nil
     end
 
+    local rows = { { kind = "header", values = { "Kennzahl", "Wert", "Kennzahl", "Wert" } } }
+    for index = 1, #metrics, 2 do
+        local left, right = metrics[index], metrics[index + 1] or { "", "" }
+        table.insert(rows, { kind = "metric", values = { left[1], left[2], right[1], right[2] } })
+    end
+    for _, row in ipairs(extraRows) do table.insert(rows, row) end
+
     self.detailTitle:SetText(result.name or (result.order and result.order.name) or "Itemdetails")
-    self.detailSummary:SetText(table.concat(lines, "\n"))
-    self.detailSummary:SetHeight(math.max(82, self.detailSummary:GetStringHeight() + 10))
-    self.detailContent:SetHeight(self.detailSummary:GetHeight())
+    self:RenderDetailRows(rows)
     self.detailAction:Enable()
     if searchable then self.detailSearch:Show() else self.detailSearch:Hide() end
 end
