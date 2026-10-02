@@ -565,13 +565,10 @@ function UI:UpgradeTabs()
     local definitions = { { "recipeButton", "recipes", "Herstellen", 112 }, { "matsButton", "materials", "Markt", 88 },
         { "opportunityButton", "opportunities", "Chancen", 88 }, { "ordersButton", "orders", "Aufträge", 92 } }
     for _, definition in ipairs(definitions) do
-        local old = self[definition[1]]
-        local tab = CreateFrame("Button", nil, self.frame, "CharacterFrameTabButtonTemplate")
-        tab:SetText(definition[3]); tab:SetSize(definition[4], 28); tab:SetAllPoints(old)
-        tab:SetScript("OnClick", function() self:SetView(definition[2]) end)
-        old:Hide()
-        self[definition[1]] = tab
-        tab.ahtView = definition[2]
+        local button = self[definition[1]]
+        button:SetText(definition[3])
+        button:SetSize(definition[4], 24)
+        button:SetScript("OnClick", function() self:SetView(definition[2]) end)
     end
     self:UpdateNavigation()
 end
@@ -579,12 +576,6 @@ end
 local baseNavigation = UI.UpdateNavigation
 function UI:UpdateNavigation()
     baseNavigation(self)
-    for _, button in ipairs({ self.recipeButton, self.matsButton, self.opportunityButton, self.ordersButton }) do
-        if button.ahtView then
-            if self.viewMode == button.ahtView and PanelTemplates_SelectTab then PanelTemplates_SelectTab(button)
-            elseif PanelTemplates_DeselectTab then PanelTemplates_DeselectTab(button) end
-        end
-    end
 end
 
 local baseControls = UI.RefreshControls
