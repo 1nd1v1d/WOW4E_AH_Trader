@@ -11,6 +11,11 @@ local function SortedOffers(results)
     return offers
 end
 
+local function VendorInfo(target)
+    if not target or not AHT.Commerce or not AHT.Commerce.GetVendorInfo then return nil end
+    return AHT.Commerce:GetVendorInfo(target.itemID, target.name)
+end
+
 function AHT.Buyer:BuildPlan(results, quantity, maxUnitPrice)
     local plan = { lines = {}, quantity = quantity, total = 0, missing = quantity, maxUnitPrice = maxUnitPrice, plannedQuantity = 0 }
     for _, offer in ipairs(SortedOffers(results)) do
@@ -32,6 +37,10 @@ function AHT.Buyer:BuildPlan(results, quantity, maxUnitPrice)
 end
 
 function AHT.Buyer:Preview(target, quantity, callback)
+    if VendorInfo(target) then
+        if callback then callback(nil, "vendor_item") end
+        return false
+    end
     if not AHT.AHOpen then
         if callback then callback(nil, "auction_house_closed") end
         return
@@ -69,6 +78,10 @@ end
 
 function AHT.Buyer:Confirm(plan, callback)
     if not plan or not plan.target or not plan.quantity then return false end
+    if VendorInfo(plan.target) then
+        if callback then callback("error", "vendor_item") else AHT:Print(AHT:ErrorText("vendor_item")) end
+        return false
+    end
     if self.pending then
         AHT:Print("Es läuft bereits eine Kaufprüfung.")
         return false
@@ -136,6 +149,10 @@ function AHT.Buyer:StartPendingPurchase()
 end
 
 function AHT.Buyer:Execute(plan)
+    if VendorInfo(plan and plan.target) then
+        self:Finish("error", "vendor_item")
+        return false
+    end
     if plan.validate then
         local allowed, reason = plan.validate(plan)
         if not allowed then self:Finish("error", reason) return end

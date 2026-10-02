@@ -1,4 +1,4 @@
-TEST = { now = 2000000000, timers = {}, frames = {}, realm = "Forever", stock = {}, money = 1000000, calls = {} }
+TEST = { now = 2000000000, timers = {}, frames = {}, realm = "Forever", characterName = "Testmage", factionGroup = "Alliance", realmMode = "pve", stock = {}, money = 1000000, calls = {} }
 function TEST.Flush(limit)
     for _ = 1, limit or 200 do
         local timer = table.remove(TEST.timers, 1)
@@ -74,7 +74,9 @@ function GetNormalizedRealmName() return TEST.realm end
 GetRealmName = GetNormalizedRealmName
 function GetAutoCompleteRealms() return { TEST.realm } end
 function GetCurrentRegion() return 3 end
-function UnitName() return "Testmage" end
+function UnitName() return TEST.characterName end
+function UnitFactionGroup() return TEST.factionName or TEST.factionGroup, TEST.factionGroup end
+function IsPVPRealm() return TEST.realmMode == "pvp" end
 function GetBuildInfo() return "1.60.1", "69913", "Sep 17 2026", 16001 end
 function GetLocale() return "deDE" end
 function date(format, t) return os.date(format, t) end
@@ -84,8 +86,14 @@ function PanelTemplates_DeselectTab(frame) frame.selected = false end
 function InCombatLockdown() return false end
 C_Timer = { After = function(_, fn) table.insert(TEST.timers, fn) end }
 C_Item = { GetItemInfo = GetItemInfo, GetItemCount = function(id, bank) local c = TEST.stock[id] or {}; return (c.bags or 0) + (bank and (c.bank or 0) or 0) end }
-C_Container = { GetContainerNumSlots = function(bag) return bag == 0 and 2 or 0 end,
-    GetContainerItemInfo = function(bag, slot) if bag == 0 then return { itemID = 100, stackCount = slot == 1 and 3 or 5 } end end }
+C_Container = { GetContainerNumSlots = function(bag)
+    if TEST.containers then return #(TEST.containers[bag] or {}) end
+    return bag == 0 and 2 or 0
+end,
+    GetContainerItemInfo = function(bag, slot)
+        if TEST.containers then return TEST.containers[bag] and TEST.containers[bag][slot] end
+        if bag == 0 then return { itemID = 100, stackCount = slot == 1 and 3 or 5 } end
+    end }
 ItemLocation = { CreateFromBagAndSlot = function(_, bag, slot) return { bagID = bag, slotIndex = slot } end }
 C_AuctionHouse = { MakeItemKey = function(id) return { itemID = id, itemLevel = 5, itemSuffix = 0, battlePetSpeciesID = 0 } end,
     GetItemCommodityStatus = function() return 0 end, CalculateItemDeposit = function() return 10 end,

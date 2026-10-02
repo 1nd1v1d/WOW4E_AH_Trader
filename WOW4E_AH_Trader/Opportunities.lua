@@ -111,7 +111,7 @@ function AHT.Opportunities:Build()
                 updatedAt = snapshot.updatedAt, source = snapshot.source, marketSamples = confidenceSamples })
         end
 
-        -- Sell chance: only items actually owned by the character are shown.
+        -- Sell chance: include inventory snapshots from the same tradable character pool.
         -- A sale is attractive when the current price is above the robust
         -- market value, above the craft cost, or clearly above vendor value.
         local stock = AHT.Inventory and AHT.Inventory:GetCount(itemID) or { total = 0 }
@@ -145,9 +145,10 @@ function AHT.Opportunities:Build()
                     netIncome = sellNet,
                     roi = costBasis and costBasis > 0 and ((sellNet - costBasis) / costBasis * 100) or 0,
                     quantity = owned,
-                    stockBags = stock.bags or 0,
-                    stockBank = stock.bank or 0,
-                    bankKnown = stock.bankKnown,
+                    stockBags = stock.accountBags or stock.bags or 0,
+                    stockBank = stock.accountBank or stock.bank or 0,
+                    bankKnown = stock.accountBankKnown,
+                    characterCount = stock.characterCount or 1,
                     listingCount = snapshot and snapshot.listingCount or 0,
                     confidence = Confidence(snapshot or {}),
                     bestMethod = "AH",

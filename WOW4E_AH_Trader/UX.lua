@@ -148,7 +148,7 @@ function UI:GetSelectedRecipeCount()
     return count
 end
 
-function UI:SetVisibleRecipeSelection(checked, clearAll)
+function UI:SetVisibleRecipeSelection(checked, clearAll, allRecipes)
     if not AHT.DB or not AHT.Store then return false end
     local selection = RecipeScanSelection()
     if clearAll then
@@ -156,6 +156,12 @@ function UI:SetVisibleRecipeSelection(checked, clearAll)
     elseif self.viewMode ~= "recipes" and self.viewMode ~= "transmute" then
         self:AddMessage("Wechsle zu Herstellen, um Rezepte zu markieren.")
         return false
+    elseif allRecipes then
+        for _, recipe in ipairs(AHT.Recipes and AHT.Recipes:GetList() or {}) do
+            if recipe.recipeID then
+                selection[tostring(recipe.recipeID)] = checked and true or nil
+            end
+        end
     else
         for _, result in ipairs(self.visibleResults or {}) do
             if result.recipeID then
@@ -172,6 +178,7 @@ end
 local baseCreateRow = UI.CreateRow
 function UI:CreateRow(index)
     local row = baseCreateRow(self, index)
+    if not row then return nil end
     local checkbox = CreateFrame("CheckButton", nil, row, "UICheckButtonTemplate")
     checkbox:SetSize(18, 18)
     checkbox:SetPoint("LEFT", row, "LEFT", 3, 0)
@@ -248,6 +255,9 @@ function UI:RenderVisibleRows()
                 for cellIndex, column in ipairs(columns) do
                     local value = result[column.key]
                     if column.key == "name" then
+                        if result.kind == "material" and result.nameNeedsCache then
+                            self:RequestItemName(result.itemID)
+                        end
                         value = (result.isWatched and "* " or "") .. (result.side == "buy" and "Kauf: " or result.side == "sell" and "Verkauf: " or "") .. tostring(result.name or "?")
                     elseif moneyKeys[column.key] then value = Money(value)
                     elseif percentKeys[column.key] then value = value and string.format("%+.1f%%", value) or "-"
@@ -642,7 +652,8 @@ function UI:RenderBuyDialog()
             local reserved = AHT.Production:GetReserved(reagent.itemID)
             local required = (reagent.quantity or 1) * crafts
             table.insert(requirements, { itemID = reagent.itemID, name = reagent.name, required = required,
-                bags = count.bags, bank = count.bank, bankKnown = count.bankKnown, reservedOther = reserved,
+                bags = count.accountBags or count.bags, bank = count.accountBank or count.bank,
+                bankKnown = count.accountBankKnown, reservedOther = reserved,
                 toBuy = math.max(0, required - math.max(0, count.total - reserved)), bought = 0,
                 unitPrice = AHT.Store:GetPrice(reagent.itemID) })
         end
@@ -667,7 +678,9 @@ function UI:RenderBuyDialog()
         local plan = order and (AHT.Production.runtimePlans[tostring(order.id)] or {})[tostring(requirement.itemID)]
         local total = plan and plan.total or requirement.unitPrice and missing * requirement.unitPrice
         local unit = plan and plan.plannedQuantity > 0 and plan.total / plan.plannedQuantity or requirement.unitPrice
-        local values = { requirement.name or AHT:GetItemInfo(requirement.itemID) or tostring(requirement.itemID),
+        local name = requirement.name or AHT:GetItemInfo(requirement.itemID) or tostring(requirement.itemID)
+        if requirement.source == "vendor" then name = name .. " (Händler)" end
+        local values = { name,
             requirement.required, requirement.bags or 0, requirement.bankKnown and requirement.bank or "?",
             requirement.reservedOther or 0, missing, Money(unit), Money(total) }
         for n, value in ipairs(values) do row.cells[n]:SetText(tostring(value)) end
@@ -680,6 +693,7 @@ function UI:RenderBuyDialog()
         checking = "Preise und Gesamtmarge werden erneut geprüft...", ready = "Plan geprüft. Einkauf vorbereiten.",
         buying = "Live-Angebote werden geprüft...", awaiting_purchase = "Kauf ist vorbereitet. Bitte auslösen.",
         awaiting_confirmation = "Live-Gesamtsumme bestätigen.", submitted = "Warte auf Kaufbestätigung des Servers...",
+        vendor_required = "Händlerzutat fehlt. Bitte außerhalb des AH kaufen und danach den Bestand erneut prüfen.",
         next_ready = "Nächste Zutat vorbereiten.", ready_to_craft = "Alle Zutaten eingeplant/gekauft. Bank oder Post ggf. abholen.",
         paused = "Einkauf pausiert. Preise erneut prüfen.", incomplete = "Materialmenge oder Preis fehlt.", cancelled = "Auftrag storniert." })[status] or status
     frame.summary:SetText(preview and string.format("Ausgegeben %s  |  Noch zu kaufen %s  |  Gesamt %s\nMaterialwert inkl. Bestand %s  |  Erlös nach AH-Gebühr %s\nAuftragsgewinn %s  |  Marge %s  |  Minimum %.1f%%  |  Budget: %s",
@@ -690,6 +704,7 @@ function UI:RenderBuyDialog()
     frame.status:SetText(frame.message or (order and order.lastError and AHT:ErrorText(order.lastError)) or statusText)
     frame.action:Disable()
     frame.action:SetText("Einkauf vorbereiten")
+    if order and order.status == "vendor_required" then frame.action:SetText("Bestand erneut prüfen") end
     local pending = AHT.Buyer.pending
     local ownPending = pending and AHT.Production.active and order and tostring(AHT.Production.active.orderID) == tostring(order.id)
     if ownPending and pending.state == "ready_to_buy" then
@@ -730,7 +745,7 @@ function UI:ShowBuyDialog(result, existingOrder)
             end)
         end)
         frame.suggest:SetPoint("TOPLEFT", 16, -94)
-        local headers, positions = { "Material", "Bedarf", "Tasche", "Bank", "Reserviert", "Fehlen", "Preis/Stk", "Noch kaufen" }, { 0, 240, 295, 350, 410, 485, 560, 665 }
+        local headers, positions = { "Material", "Bedarf", "Taschen ges.", "Bank ges.", "Reserviert", "Fehlen", "Preis/Stk", "Noch kaufen" }, { 0, 240, 295, 350, 410, 485, 560, 665 }
         for i, text in ipairs(headers) do local h = Text(frame, text, i == 1 and 230 or 100); h:SetPoint("TOPLEFT", 16 + positions[i], -135); h:SetTextColor(1, 0.82, 0) end
         frame.materialScroll = CreateFrame("ScrollFrame", nil, frame, "UIPanelScrollFrameTemplate")
         frame.materialScroll:SetPoint("TOPLEFT", 16, -158); frame.materialScroll:SetPoint("BOTTOMRIGHT", -40, 170)

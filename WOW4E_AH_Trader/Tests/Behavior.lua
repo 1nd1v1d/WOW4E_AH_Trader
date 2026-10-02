@@ -15,6 +15,65 @@ test("schema migration and canonical identity", function()
     local canonical = AHT.DB; WOW4E_AHT_DB = nil; AHT.DB = nil
     assert(AHT.Store:Save()); equal(AHT.DB, canonical); equal(WOW4E_AHT_DB, canonical)
 end)
+test("account inventory combines only matching realm faction and PvP mode", function()
+    AHT.Inventory.bankOpen = false
+    TEST.stock[501] = { bags = 2, bank = 0 }
+    local own = AHT.Inventory:GetCharacterStore()
+    own.bags["501"] = 99 -- the live bags must replace, not add to, this character's saved snapshot
+    own.bank["501"] = 1
+    own.bankUpdatedAt = TEST.now
+    AHT.DB.inventory.characters["forever:alliance:pve:Crafter"] = {
+        characterName = "Crafter", realm = "forever", faction = "alliance", mode = "pve",
+        bags = { ["501"] = 7 }, bagsUpdatedAt = TEST.now - 30,
+        bank = { ["501"] = 3 }, bankUpdatedAt = TEST.now - 60,
+    }
+    AHT.DB.inventory.characters["forever:horde:pve:HordeAlt"] = {
+        characterName = "HordeAlt", realm = "forever", faction = "horde", mode = "pve",
+        bags = { ["501"] = 100 }, bagsUpdatedAt = TEST.now,
+        bank = { ["501"] = 100 }, bankUpdatedAt = TEST.now,
+    }
+    AHT.DB.inventory.characters["forever:alliance:pvp:PVPCrafter"] = {
+        characterName = "PVPCrafter", realm = "forever", faction = "alliance", mode = "pvp",
+        bags = { ["501"] = 200 }, bagsUpdatedAt = TEST.now,
+        bank = { ["501"] = 200 }, bankUpdatedAt = TEST.now,
+    }
+    AHT.DB.inventory.characters["other:alliance:pve:OtherRealm"] = {
+        characterName = "OtherRealm", realm = "other", faction = "alliance", mode = "pve",
+        bags = { ["501"] = 300 }, bagsUpdatedAt = TEST.now,
+        bank = { ["501"] = 300 }, bankUpdatedAt = TEST.now,
+    }
+
+    local count = AHT.Inventory:GetCount(501)
+    equal(count.bags, 2); equal(count.accountBags, 9)
+    equal(count.bank, 1); equal(count.accountBank, 4); equal(count.total, 13)
+    equal(count.characterCount, 2); equal(count.modeKnown, true); equal(count.poolKnown, true)
+    assert(AHT.Inventory:GetAvailableItemSet()["501"])
+end)
+test("unknown realm mode never mixes character inventories", function()
+    local detectRealmMode = IsPVPRealm
+    IsPVPRealm = nil
+    local count = AHT.Inventory:GetCount(501)
+    equal(count.total, 2); equal(count.characterCount, 1); equal(count.poolKnown, false)
+    IsPVPRealm = detectRealmMode
+end)
+test("bag snapshots persist and legacy character inventory migrates", function()
+    TEST.containers = { [0] = {
+        { itemID = 600, stackCount = 2 },
+        { itemID = 600, stackCount = 3 },
+    } }
+    AHT.Inventory:OnEvent("BAG_UPDATE_DELAYED")
+    local own = AHT.Inventory:GetCharacterStore()
+    equal(own.bags["600"], 5); equal(own.bagsUpdatedAt, TEST.now)
+
+    TEST.characterName = "Legacy"
+    local legacy = { bank = { ["601"] = 4 }, bankUpdatedAt = TEST.now - 10 }
+    AHT.DB.inventory.characters["Forever:Legacy"] = legacy
+    local migrated = AHT.Inventory:GetCharacterStore()
+    assert(migrated == legacy); equal(migrated.mode, "pve"); equal(migrated.faction, "alliance")
+    assert(AHT.DB.inventory.characters["Forever:Legacy"] == nil)
+    TEST.characterName = "Testmage"
+    TEST.containers = nil
+end)
 test("browse preserves detailed distribution and unknown listing count", function()
     record(100, 100, "detailed", { 100, 200, 300 }); local r = AHT.Store:GetByItemID(100)
     local median, timestamp = r.medianPrice, r.distributionAt
@@ -49,6 +108,62 @@ end)
 test("whole stack cost uses exact buyout, no rounding loss", function()
     local plan = AHT.Buyer:BuildPlan({ { kind = "item", quantity = 3, unitPrice = 33, buyoutAmount = 100 } }, 1, 40)
     equal(plan.total, 100); equal(plan.plannedQuantity, 3)
+end)
+test("vendor reagents are costed separately and blocked from AH purchases", function()
+    local quote = AHT.Commerce:GetVendorInfo(3371, "Empty Vial")
+    assert(quote); equal(quote.unitPrice, 4)
+    equal(AHT.Commerce:GetVendorInfo(3372).unitPrice, 40)
+    equal(AHT.Commerce:GetVendorInfo(8925).unitPrice, 500)
+    assert(AHT.Commerce:IsVendorItem(18256))
+    local recipe = { recipeID = 9911, name = "Vendor-Rezept", output = { itemID = 9912, quantity = 1 },
+        reagents = { { itemID = 3371, name = "Empty Vial", quantity = 2 } } }
+    local order = assert(AHT.Production:CreateOrder(recipe, 1))
+    equal(order.requirements[1].source, "vendor"); equal(order.requirements[1].unitPrice, 4)
+
+    local originalSearch, searched = AHT.AH.Search, {}
+    AHT.AH.Search = function(_, target, callback)
+        table.insert(searched, target.itemID)
+        callback({}, {})
+        return true
+    end
+    assert(AHT.Production:PreviewOrder(order)); equal(#searched, 1); equal(searched[1], 9912)
+    local prepared, prepareError = true, nil
+    local started = AHT.Production:PrepareRequirement(order, order.requirements[1], function(plan, err)
+        prepared, prepareError = plan, err
+    end)
+    equal(started, false); equal(prepared, nil); equal(prepareError, "vendor_purchase_required")
+
+    local callbackState, callbackError
+    local confirmed = AHT.Buyer:Confirm({ target = { itemID = 3371, name = "Empty Vial" }, quantity = 1,
+        lines = { { offer = { kind = "item", auctionID = 1, buyoutAmount = 1 }, quantity = 1 } } },
+        function(state, err) callbackState, callbackError = state, err end)
+    equal(confirmed, false); equal(callbackState, "error"); equal(callbackError, "vendor_item")
+    equal(#searched, 1)
+    AHT.Buyer.pending = { state = "ready_to_buy", plan = { target = { itemID = 3371, name = "Empty Vial" } } }
+    TEST.calls.bid = nil
+    AHT.Buyer:StartPendingPurchase()
+    equal(TEST.calls.bid, nil); equal(AHT.Buyer.pending, nil)
+
+    local originalOrders = AHT.Production.GetActiveOrders
+    AHT.Production.GetActiveOrders = function() return { order } end
+    equal(#AHT.Commerce:AggregateShopping(), 0)
+    AHT.Production.GetActiveOrders = originalOrders
+    AHT.AH.Search = originalSearch
+    AHT.Production:CancelOrder(order)
+end)
+test("merchant observations persist vendor prices for known recipe reagents", function()
+    local oldNum, oldInfo, oldLink, oldGetItemID = GetMerchantNumItems, GetMerchantItemInfo, GetMerchantItemLink, AHT.GetItemID
+    local oldRecipes, oldVendorItems = AHT.DB.recipes, AHT.DB.vendorItems
+    AHT.DB.recipes = { { reagents = { { itemID = 9988, name = "Merchant Reagent" } } } }
+    GetMerchantNumItems = function() return 1 end
+    GetMerchantItemInfo = function() return "Merchant Reagent", nil, 120, 5, -1, true, true, false end
+    GetMerchantItemLink = function() return "item:9988" end
+    AHT.GetItemID = function() return 9988 end
+    equal(AHT.Commerce:CaptureMerchantItems(), 1)
+    local quote = AHT.Commerce:GetVendorInfo(9988)
+    assert(quote); equal(quote.unitPrice, 24); equal(quote.source, "merchant")
+    GetMerchantNumItems, GetMerchantItemInfo, GetMerchantItemLink, AHT.GetItemID = oldNum, oldInfo, oldLink, oldGetItemID
+    AHT.DB.recipes, AHT.DB.vendorItems = oldRecipes, oldVendorItems
 end)
 test("live margin and budget include already paid and remaining", function()
     record(100, 100); record(200, 20)

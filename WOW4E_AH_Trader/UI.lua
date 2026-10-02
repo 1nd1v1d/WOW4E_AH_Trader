@@ -15,6 +15,35 @@ AHT.UI = {
     selectedResult = nil,
 }
 
+local requestedItemNames = {}
+
+local function UsableItemName(value)
+    if value == nil then return nil end
+    local name = tostring(value):match("^%s*(.-)%s*$")
+    if name == "" or tonumber(name) then return nil end
+    return name
+end
+
+function AHT.UI:RequestItemName(itemID)
+    itemID = tonumber(itemID)
+    if not itemID or requestedItemNames[itemID] then return end
+    local request = C_Item and C_Item.RequestLoadItemDataByID
+    if type(request) ~= "function" then return end
+    requestedItemNames[itemID] = true
+    local ok = pcall(request, itemID)
+    if not ok then requestedItemNames[itemID] = nil end
+end
+
+function AHT.UI:OnItemInfoLoaded(itemID, success)
+    itemID = tonumber(itemID)
+    if not itemID or not requestedItemNames[itemID] then return end
+    requestedItemNames[itemID] = nil
+    if success == false then return end
+    if self.frame and self.frame:IsShown() and self.viewMode == "materials" then
+        self:RequestRefresh()
+    end
+end
+
 local function MakeBackdrop(frame)
     if frame.SetBackdrop then
         frame:SetBackdrop({
@@ -285,7 +314,7 @@ function AHT.UI:RefreshControls()
     if self.filterButton then
         if searchable and self.viewMode ~= "orders" then self.filterButton:Show() else self.filterButton:Hide() end
         if materials then
-            local labels = { all = "Alle Items", watched = "Beobachtet", inventory = "Tasche/Bank" }
+            local labels = { all = "Alle Items", watched = "Beobachtet", inventory = "Bestand aller Figuren" }
             self.filterButton:SetText(labels[self.marketFilter] or labels.all)
         else
             self.filterButton:SetText(self.profitOnly and "Alle" or "Nur profitabel")
@@ -298,6 +327,14 @@ function AHT.UI:RefreshControls()
     if self.professionButton then
         if recipes then self.professionButton:Show() else self.professionButton:Hide() end
         self.professionButton:SetText(self.professionFilter or "Alle Berufe")
+    end
+    if self.recipeSelectionButton then
+        if recipes then
+            self.recipeSelectionButton:Show()
+        else
+            self.recipeSelectionButton:Hide()
+            if self.recipeSelectionMenu then self.recipeSelectionMenu:Hide() end
+        end
     end
     if self.opportunityDirectionButton then
         if opportunities then self.opportunityDirectionButton:Show() else self.opportunityDirectionButton:Hide() end
@@ -559,6 +596,9 @@ function AHT.UI:Create()
     self.moreButton = Button(self.frame, nil, "Mehr", 70, 24)
     self.moreButton:SetPoint("LEFT", self.ordersButton, "RIGHT", 8, 0)
 
+    self.recipeSelectionButton = Button(self.frame, nil, "Auswahl", 90, 24)
+    self.recipeSelectionButton:SetPoint("LEFT", self.moreButton, "RIGHT", 8, 0)
+
     self.scanButton = Button(self.frame, nil, "Scannen", 120, 24)
     self.scanButton:SetPoint("TOPRIGHT", -18, -70)
     self.scanButton:SetScript("OnClick", function()
@@ -600,8 +640,6 @@ function AHT.UI:Create()
         { label = "Markierte Rezepte scannen", action = function()
             AHT.Scanner:Start(AHT.Scanner:BuildSelectedRecipeTargets(), "selected_recipes")
         end },
-        { label = "Gefilterte Rezepte markieren", action = function() self:SetVisibleRecipeSelection(true) end },
-        { label = "Rezeptmarkierungen löschen", action = function() self:SetVisibleRecipeSelection(false, true) end },
     }
     self.scanMenu:SetSize(250, 28 + #self.scanOptions * 31)
     self.scanMenuButtons = self.scanMenuButtons or {}
@@ -619,6 +657,46 @@ function AHT.UI:Create()
         end)
         option:Show()
     end
+
+    self.recipeSelectionMenu = CreateFrame("Frame", nil, self.frame, template)
+    self.recipeSelectionMenu:SetSize(250, 28 + 3 * 31)
+    self.recipeSelectionMenu:SetPoint("TOPLEFT", self.recipeSelectionButton, "BOTTOMLEFT", 0, -4)
+    self.recipeSelectionMenu:SetFrameStrata("TOOLTIP")
+    MakeBackdrop(self.recipeSelectionMenu)
+    self.recipeSelectionMenu:Hide()
+    self.recipeSelectionMenuButtons = self.recipeSelectionMenuButtons or {}
+    local recipeSelectionOptions = {
+        { label = "Alle Rezepte markieren", action = function() self:SetVisibleRecipeSelection(true, false, true) end },
+        { label = "Gefilterte Rezepte markieren", action = function() self:SetVisibleRecipeSelection(true) end },
+        { label = "Alle Markierungen aufheben", action = function() self:SetVisibleRecipeSelection(false, true) end },
+    }
+    for index, optionData in ipairs(recipeSelectionOptions) do
+        local option = self.recipeSelectionMenuButtons[index] or Button(self.recipeSelectionMenu, nil, "", 226, 26)
+        local action = optionData.action
+        self.recipeSelectionMenuButtons[index] = option
+        option:ClearAllPoints()
+        option:SetPoint("TOPLEFT", 12, -9 - (index - 1) * 31)
+        option:SetText(optionData.label)
+        option:SetScript("OnClick", function()
+            self.recipeSelectionMenu:Hide()
+            action()
+            self:RefreshStatus()
+        end)
+        option:Show()
+    end
+    self.recipeSelectionButton:SetScript("OnClick", function()
+        if self.recipeSelectionMenu:IsShown() then
+            self.recipeSelectionMenu:Hide()
+        else
+            self.recipeSelectionMenuButtons[1]:SetText(string.format(
+                "Alle Rezepte markieren (%d)", #(AHT.Recipes and AHT.Recipes:GetList() or {})
+            ))
+            self.recipeSelectionMenuButtons[3]:SetText(string.format(
+                "Alle Markierungen aufheben (%d)", self:GetSelectedRecipeCount()
+            ))
+            self.recipeSelectionMenu:Show()
+        end
+    end)
 
     self.transmuteButton = Button(self.frame, nil, "Transmute", 105, 24)
     self.transmuteButton:SetPoint("TOPLEFT", 360, -99)
@@ -849,6 +927,7 @@ function AHT.UI:CreateRow(index)
         if self.recipeTooltipOwner == row then self:HideRecipeContext() end
     end)
     self.rows[index] = row
+    return row
 end
 
 function AHT.UI:OpenResultInAuctionHouse(result)
@@ -998,6 +1077,11 @@ function AHT.UI:CreateAHRecipeRow(index)
 end
 
 local function AHRecipeListingText(entry)
+    if entry.vendor then
+        local price = tonumber(entry.vendor.unitPrice)
+        return price ~= nil and ("Händlerware: " .. AHT:FormatMoneyPlain(price) .. "/Stk; nicht im AH gesucht.")
+            or "Händlerware; Preis am Händler prüfen. Nicht im AH gesucht."
+    end
     if entry.loading then return "Listings werden geladen..." end
     if not entry.loaded then return "Listings noch nicht geladen." end
     if entry.error then return "Listing-Suche fehlgeschlagen: " .. tostring(entry.error) end
@@ -1020,14 +1104,18 @@ function AHT.UI:RecalculateAHRecipeEntries()
     for _, entry in ipairs(self.ahCraftMaterials or {}) do
         local counts = AHT.Inventory and AHT.Inventory:GetCount(entry.itemID) or { bags = 0, bank = 0, total = 0, bankKnown = false }
         entry.required = (tonumber(entry.quantityPerCraft) or 1) * crafts
-        entry.bags = counts.bags or 0
-        entry.bank = counts.bank or 0
-        entry.bankKnown = counts.bankKnown
+        entry.bags = counts.accountBags or counts.bags or 0
+        entry.bank = counts.accountBank or counts.bank or 0
+        entry.bankKnown = counts.accountBankKnown
+        entry.characterCount = counts.characterCount or 1
         entry.owned = counts.total or 0
         entry.toBuy = math.max(0, entry.required - entry.owned - (entry.purchasedQuantity or 0))
         entry.plan = nil
         entry.estimated = nil
-        if entry.loaded and entry.results and entry.toBuy > 0 and AHT.Buyer then
+        if entry.vendor then
+            entry.cheapest = tonumber(entry.vendor.unitPrice)
+            if entry.cheapest ~= nil then entry.estimated = entry.toBuy * entry.cheapest end
+        elseif entry.loaded and entry.results and entry.toBuy > 0 and AHT.Buyer then
             entry.cheapest = entry.results[1] and entry.results[1].unitPrice or nil
             if entry.cheapest and entry.cheapest > 0 then
                 entry.plan = AHT.Buyer:BuildPlan(entry.results, entry.toBuy, entry.cheapest)
@@ -1105,8 +1193,9 @@ function AHT.UI:RenderAHRecipePanel()
         row:SetPoint("TOPLEFT", 0, -offset)
         row:SetWidth(width)
         row.title:SetText(string.format(
-            "%s | benötigt: %d | Bestand: %d | zu kaufen: %d",
+            "%s%s | benötigt: %d | Bestand: %d | zu kaufen: %d",
             tostring(entry.name or entry.itemID),
+            entry.vendor and " (Händler)" or "",
             entry.required or 0,
             entry.owned or 0,
             entry.toBuy or 0
@@ -1114,14 +1203,17 @@ function AHT.UI:RenderAHRecipePanel()
         local bankText = entry.bankKnown and tostring(entry.bank or 0) or "?"
         local estimate = entry.estimated and AHT:FormatMoneyPlain(entry.estimated) or "?"
         row.details:SetText(string.format(
-            "pro Herstellung: %d | Tasche: %d | Bank: %s | geschätzt: %s",
+            "pro Herstellung: %d | Taschen aller Figuren: %d | Banken: %s | geschätzt: %s",
             entry.quantityPerCraft or 1, entry.bags or 0, bankText, estimate
         ))
         row.listings:SetText(AHRecipeListingText(entry))
         if entry.error then
             row.details:SetText(row.details:GetText() .. "\nFehler: " .. tostring(entry.error))
         end
-        if not AHT.AHOpen then
+        if entry.vendor then
+            row.buy:SetText("Beim Händler")
+            row.buy:Disable()
+        elseif not AHT.AHOpen then
             row.buy:SetText("AH geschlossen")
             row.buy:Disable()
         elseif entry.buyState == "confirm" then
@@ -1216,6 +1308,19 @@ function AHT.UI:StartAHRecipeListingScan(recipe)
             self:RenderAHRecipePanel()
             return
         end
+        if entry.kind == "material" then
+            local vendor = AHT.Commerce and AHT.Commerce:GetVendorInfo(entry.itemID, entry.name)
+            if vendor then
+                entry.vendor = vendor
+                entry.loading, entry.loaded, entry.results = false, true, {}
+                entry.meta, entry.error = { totalQuantity = 0 }, nil
+                index = index + 1
+                self:RecalculateAHRecipeEntries()
+                self:RenderAHRecipePanel()
+                Next()
+                return
+            end
+        end
         entry.loading = true
         self:RenderAHRecipePanel()
         AHT.AH:Search({ itemID = entry.itemID, itemKey = entry.itemKey, name = entry.name, kind = entry.kind }, function(results, meta)
@@ -1238,6 +1343,15 @@ end
 
 function AHT.UI:BuyAHRecipeMaterial(entry)
     if not entry or entry.kind ~= "material" then return false end
+    local vendor = AHT.Commerce and AHT.Commerce:GetVendorInfo(entry.itemID, entry.name)
+    if vendor then
+        entry.vendor = vendor
+        entry.buyState = nil
+        entry.error = "Händlerware wird nicht im Auktionshaus gekauft."
+        self.ahRecipeStatus = "Dieses Material bitte beim Händler besorgen; es wird im AH übersprungen."
+        self:RenderAHRecipePanel()
+        return false
+    end
     if entry.buyState == "confirm" then
         if AHT.Buyer and AHT.Buyer:ConfirmCommodity() then
             entry.buyState = "submitted"
@@ -1638,7 +1752,8 @@ function AHT.UI:RefreshDetail()
         AddMetric("Änderung", PercentText(result.priceChangePercent))
         AddMetric("Listings", result.listingCount or "?")
         AddMetric("Angebot", result.totalQuantity or "?")
-        AddMetric("Tasche/Bank", string.format("%d / %s", counts.bags or 0, counts.bankKnown and tostring(counts.bank or 0) or "?"))
+        AddMetric(string.format("Bestand (%d Figuren)", counts.characterCount or 1), string.format("Taschen %d / Banken %s", counts.accountBags or counts.bags or 0, counts.accountBankKnown and tostring(counts.accountBank or 0) or "?"))
+        if not counts.poolKnown then AddMetric("Inventarpool", "Nur aktueller Charakter") end
         AddMetric("Scanalter", ScanAgeText(result.updatedAt))
         self.detailAction:SetText("Aktionen")
         searchable = true
@@ -1691,7 +1806,7 @@ function AHT.UI:RefreshDetail()
 
         local crafts = math.max(1, tonumber(result.suggestedCrafts) or 0)
         if #(result.reagents or {}) > 0 then
-            table.insert(extraRows, { kind = "section", values = { string.format("ZUTATEN | %d Vorgänge | T/B Tasche/Bank | R/F reserviert/fehlt", crafts) } })
+            table.insert(extraRows, { kind = "section", values = { string.format("ZUTATEN | %d Vorgänge | Bestand aller Figuren: Taschen/Bank | R/F reserviert/fehlt", crafts) } })
             table.insert(extraRows, { kind = "header", values = { "Zutat", "Bedarf", "AH/Stk", "T/B • R/F" }, widths = DETAIL_INGREDIENT_WIDTHS })
             for _, reagent in ipairs(result.reagents) do
                 local quantity = (tonumber(reagent.quantity) or 1) * crafts
@@ -1699,11 +1814,14 @@ function AHT.UI:RefreshDetail()
                 local price = AHT.Store and AHT.Store:GetPrice(reagent.itemID)
                 local count = AHT.Inventory and AHT.Inventory:GetCount(reagent.itemID) or { bags = 0, bank = 0, bankKnown = false }
                 local reserved = AHT.Production and AHT.Production:GetReserved(reagent.itemID) or 0
-                local knownStock = (count.bags or 0) + (count.bankKnown and (count.bank or 0) or 0)
+                local accountBags = count.accountBags or count.bags or 0
+                local accountBank = count.accountBank or count.bank or 0
+                local accountBankKnown = count.accountBankKnown
+                local knownStock = accountBags + (accountBankKnown and accountBank or 0)
                 local available = math.max(0, knownStock - reserved)
-                local missing = available >= quantity and 0 or count.bankKnown and (quantity - available) or "?"
-                local stockText = string.format("%d/%s • %d/%s", count.bags or 0,
-                    count.bankKnown and tostring(count.bank or 0) or "?", reserved, tostring(missing))
+                local missing = available >= quantity and 0 or accountBankKnown and (quantity - available) or "?"
+                local stockText = string.format("%d/%s • %d/%s", accountBags,
+                    accountBankKnown and tostring(accountBank) or "?", reserved, tostring(missing))
                 table.insert(extraRows, {
                     kind = "ingredient",
                     widths = DETAIL_INGREDIENT_WIDTHS,
@@ -1774,11 +1892,19 @@ function AHT.UI:ShowRecipeContext(result, owner)
             0.62, 0.72, 0.95, 0.45, 1, 0.45
         )
         GameTooltip:AddLine(string.format(
-            "  Bestand: Tasche %d | Bank %s | reserviert %d",
-            counts.bags or 0,
-            counts.bankKnown and tostring(counts.bank or 0) or "?",
+            "  Bestand (%d Figuren): Taschen %d | Banken %s | reserviert %d",
+            counts.characterCount or 1,
+            counts.accountBags or counts.bags or 0,
+            counts.accountBankKnown and tostring(counts.accountBank or 0) or "?",
             reserved
         ), 0.55, 0.72, 0.95)
+        if not counts.poolKnown then
+            GameTooltip:AddLine("  Realm, Fraktion oder PvP/PvE-Modus nicht erkannt: kein Twink-Abgleich.", 1, 0.55, 0.35)
+        elseif not counts.accountBagsKnown then
+            GameTooltip:AddLine("  Taschenstände noch unvollständig; einzelne Twinks müssen sich einmal einloggen.", 1, 0.72, 0.35)
+        elseif counts.inventoryUpdatedAt then
+            GameTooltip:AddLine("  Ältester gespeicherter Bestand: " .. ScanAgeText(counts.inventoryUpdatedAt), 0.65, 0.65, 0.65)
+        end
     end
 
     local output = result.output
@@ -1846,7 +1972,7 @@ function AHT.UI:ShowOpportunityContext(result, owner)
     GameTooltip:AddDoubleLine("ROI", string.format("%.1f%%", result.roi or 0), 0.78, 0.78, 0.78, 0.45, 1, 0.45)
     GameTooltip:AddLine(string.format("%s %.1f%% | Empfehlung: %s", selling and "Aufschlag" or "Rabatt", result.discount or 0, result.bestMethod or "AH"), 0.78, 0.78, 0.78)
     if selling then
-        GameTooltip:AddLine(string.format("Bestand: Tasche %d | Bank %s", result.stockBags or 0, result.bankKnown and tostring(result.stockBank or 0) or "?"), 0.62, 0.72, 0.95)
+        GameTooltip:AddLine(string.format("Bestand (%d Figuren): Taschen %d | Banken %s", result.characterCount or 1, result.stockBags or 0, result.bankKnown and tostring(result.stockBank or 0) or "?"), 0.62, 0.72, 0.95)
     else
         GameTooltip:AddLine(string.format("AH-Angebotsmenge: %s / %s Listings (nicht Kaufmenge)", tostring(result.availableSupply or "?"), tostring(result.listingCount or "?")), 0.62, 0.72, 0.95)
     end
@@ -1910,10 +2036,12 @@ function AHT.UI:BuildMaterialRows()
         seen[rowKey] = true
         local snapshot = AHT.Store and AHT.Store:GetMarketSnapshot(itemID, record and record.itemKey) or nil
         local updatedAt = snapshot and snapshot.updatedAt or record and tonumber(record.updatedAt) or nil
-        local name = material and material.name or record and record.name or tostring(itemID)
+        local name = UsableItemName(material and material.name) or UsableItemName(record and record.name)
+        if not name then name = UsableItemName(AHT:GetItemInfo(itemID)) end
         table.insert(rows, {
             kind = "material",
-            name = name,
+            name = name or string.format("Item #%d", itemID),
+            nameNeedsCache = name == nil,
             itemID = itemID,
             itemKey = record and record.itemKey,
             marketKey = rowKey,
@@ -2013,6 +2141,7 @@ function AHT.UI:BuildOrderRows()
         awaiting_confirmation = "Bestätigung nötig",
         submitted = "Kauf gesendet",
         next_ready = "Nächste Zutat",
+        vendor_required = "Beim Händler besorgen",
         paused = "Pausiert",
         ready_to_craft = "Bereit zum Herstellen",
     }

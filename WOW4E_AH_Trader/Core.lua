@@ -2,7 +2,7 @@ WOW4E_AHT = WOW4E_AHT or {}
 local AHT = WOW4E_AHT
 
 AHT.ADDON_NAME = "WOW4E_AH_Trader"
-AHT.VERSION = "0.9.5-beta"
+AHT.VERSION = "0.9.6-beta"
 AHT.AHOpen = false
 AHT.Initialized = false
 AHT.State = {
@@ -23,11 +23,14 @@ local EVENTS = {
     "PLAYER_LOGIN",
     "PLAYER_ENTERING_WORLD",
     "PLAYER_LOGOUT",
+    "GET_ITEM_INFO_RECEIVED",
+    "ITEM_DATA_LOAD_RESULT",
     "BAG_UPDATE_DELAYED",
     "BANKFRAME_OPENED",
     "BANKFRAME_CLOSED",
     "PLAYERBANKSLOTS_CHANGED",
     "PLAYERREAGENTBANKSLOTS_CHANGED",
+    "MERCHANT_SHOW",
     "AUCTION_HOUSE_SHOW",
     "AUCTION_HOUSE_CLOSED",
     "AUCTION_HOUSE_BROWSE_RESULTS_UPDATED",
@@ -191,11 +194,17 @@ function AHT:OnEvent(eventName, ...)
     end
 
     if eventName == "PLAYER_LOGIN" or eventName == "PLAYER_ENTERING_WORLD" then
-        if not self.Initialized then self:Initialize() end
+        if not self.Initialized then
+            self:Initialize()
+        elseif self.Inventory then
+            self.Inventory:RefreshBags()
+            if self.UI then self.UI:Refresh() end
+        end
         return
     end
 
     if eventName == "PLAYER_LOGOUT" then
+        if self.Inventory then self.Inventory:OnEvent(eventName, ...) end
         if self.Store then self.Store:Save() end
         return
     end
@@ -220,6 +229,8 @@ function AHT:OnEvent(eventName, ...)
         self.AHOpen = true
         self.State.status = "ah_open"
         if self.UI then self.UI:ShowAHButton() end
+    elseif eventName == "MERCHANT_SHOW" then
+        if self.Commerce and self.Commerce.CaptureMerchantItems then self.Commerce:CaptureMerchantItems() end
     elseif eventName == "AUCTION_HOUSE_CLOSED" then
         self.AHOpen = false
         self.State.status = "ah_closed"
@@ -249,6 +260,8 @@ function AHT:OnEvent(eventName, ...)
         if self.Recipes then self.Recipes:Refresh() end
     elseif eventName == "TRADE_SKILL_CLOSE" then
         self.State.status = self.AHOpen and "ah_open" or "ready"
+    elseif eventName == "GET_ITEM_INFO_RECEIVED" or eventName == "ITEM_DATA_LOAD_RESULT" then
+        if self.UI and self.UI.OnItemInfoLoaded then self.UI:OnItemInfoLoaded(...) end
     end
 end
 
