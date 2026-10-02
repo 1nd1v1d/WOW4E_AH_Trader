@@ -84,7 +84,7 @@ end
 local function FindSearchButton(parent)
     for _, name in ipairs({ "SearchButton", "searchButton", "Search", "searchButtonFrame" }) do
         local named = parent and parent[name]
-        if named then return named end
+        if named and type(named.Click) == "function" then return named end
     end
     local byText = FindChildObject(parent, "Button", 0, function(button)
         if type(button.GetText) ~= "function" then return false end
@@ -92,7 +92,7 @@ local function FindSearchButton(parent)
         text = string.lower(tostring(ok and text or ""))
         return text == "suchen" or text == "search"
     end)
-    return byText or FindChildObject(parent, "Button", 0)
+    return byText
 end
 
 function AHT.AH:OpenItemInAuctionHouse(target)
@@ -126,42 +126,26 @@ function AHT.AH:OpenItemInAuctionHouse(target)
         searchTextSet = ok
     end
 
-    local itemKey = target.itemKey or AHT:MakeItemKey(target.itemID)
-    local itemContext
-    if type(AuctionHouseSearchContext) == "table" then
-        local keyInfo
-        if C_AuctionHouse and type(C_AuctionHouse.GetItemKeyInfo) == "function" then
-            local ok, value = pcall(C_AuctionHouse.GetItemKeyInfo, itemKey)
-            if ok then keyInfo = value end
-        end
-        itemContext = keyInfo and keyInfo.isCommodity and AuctionHouseSearchContext.BuyCommodities or AuctionHouseSearchContext.BuyItems
+    if searchBox and searchBox.SetText then
+        local ok = pcall(searchBox.SetText, searchBox, query)
+        if ok then searchTextSet = true end
+        if searchBox.ClearFocus then pcall(searchBox.ClearFocus, searchBox) end
     end
 
-    -- QueryItem is the client's item-specific path. It updates the AH result
-    -- frame and avoids the broad browse query caused by submitting a blank
-    -- search box.
-    if type(frame.QueryItem) == "function" and itemContext then
-        local ok, result = pcall(frame.QueryItem, frame, itemContext, itemKey, false)
-        -- QueryItem returns nil on a successful query in Blizzard's client.
-        -- Only an explicit false means that this path declined the request.
+    -- Submit the visible query through the AH's own search bar. On the Forever
+    -- client QueryItem may update the text without starting a results request.
+    if searchBar and type(searchBar.StartSearch) == "function" and searchTextSet then
+        local ok, result = pcall(searchBar.StartSearch, searchBar)
         if ok and result ~= false then return true end
     end
 
-    if searchBar and type(searchBar.StartSearch) == "function" and searchTextSet then
-        local ok = pcall(searchBar.StartSearch, searchBar)
-        if ok then return true end
-    end
-
-    if searchBox and searchBox.SetText then
-        pcall(searchBox.SetText, searchBox, query)
-        if searchBox.ClearFocus then pcall(searchBox.ClearFocus, searchBox) end
-    end
+    local itemKey = target.itemKey or AHT:MakeItemKey(target.itemID)
 
     -- Prefer the client's own submit control so its result panel, filters and
     -- selected item state stay synchronized with the query field.
     if searchButton and searchButton.Click then
-        local ok = pcall(searchButton.Click, searchButton)
-        if ok then return true end
+        local ok, result = pcall(searchButton.Click, searchButton)
+        if ok and result ~= false then return true end
     end
     if searchBox and searchBox.GetScript then
         local handler = searchBox:GetScript("OnEnterPressed")
@@ -181,9 +165,8 @@ function AHT.AH:OpenItemInAuctionHouse(target)
         if ok then return true end
     end
 
-    -- Last-resort fallback for client builds without an exposed SearchBar.
-    -- The official result event will still update the AH frame when it listens
-    -- to C_AuctionHouse search responses.
+    -- Last-resort exact-item fallback for client builds without a usable
+    -- search-bar submit control. The AH listens for this official result event.
     if C_AuctionHouse and C_AuctionHouse.SendSearchQuery then
         local ok = pcall(C_AuctionHouse.SendSearchQuery, itemKey, { { sortOrder = 0, reverseSort = false } }, false)
         if ok then return true end

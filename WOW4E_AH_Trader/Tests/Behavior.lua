@@ -137,6 +137,39 @@ test("search changes coalesce into one refresh", function()
     AHT.UI.searchInput:SetText("a"); AHT.UI.searchInput:SetText("ab"); AHT.UI.searchInput:SetText("abc"); TEST.Flush()
     equal(count, 1); AHT.UI.Refresh = original; AHT.UI.searchInput:SetText(""); TEST.Flush()
 end)
+test("recipe AH search submits the visible search instead of stopping at QueryItem", function()
+    local previousFrame, previousContext = _G.AuctionHouseFrame, _G.AuctionHouseSearchContext
+    local calls = { start = 0, queryItem = 0 }
+    local frame
+    local searchBar = { StartSearch = function(self) calls.start = calls.start + 1; self.submittedText = frame.searchText end }
+    frame = { SearchBar = searchBar }
+    frame.SetSearchText = function(self, text) self.searchText = text end
+    frame.QueryItem = function() calls.queryItem = calls.queryItem + 1 end
+    frame.Show = function() end
+    _G.AuctionHouseFrame = frame
+    _G.AuctionHouseSearchContext = { BuyItems = 1, BuyCommodities = 2 }
+    local ok = AHT.AH:OpenItemInAuctionHouse({ itemID = 100, name = "Item 100" })
+    equal(ok, true); equal(frame.searchText, "Item 100"); equal(searchBar.submittedText, "Item 100")
+    equal(calls.start, 1); equal(calls.queryItem, 0)
+    _G.AuctionHouseFrame, _G.AuctionHouseSearchContext = previousFrame, previousContext
+end)
+test("recipe AH search falls back to the search box Enter handler", function()
+    local previousFrame = _G.AuctionHouseFrame
+    local calls = { enter = 0, queryItem = 0 }
+    local searchBox = {
+        SetText = function(self, text) self.text = text end,
+        ClearFocus = function() end,
+        GetScript = function(_, name)
+            if name == "OnEnterPressed" then return function() calls.enter = calls.enter + 1 end end
+        end,
+    }
+    local frame = { SearchBar = { SearchBox = searchBox }, SetSearchText = function() end, Show = function() end }
+    frame.QueryItem = function() calls.queryItem = calls.queryItem + 1 end
+    _G.AuctionHouseFrame = frame
+    local ok = AHT.AH:OpenItemInAuctionHouse({ itemID = 100, name = "Item 100" })
+    equal(ok, true); equal(searchBox.text, "Item 100"); equal(calls.enter, 1); equal(calls.queryItem, 0)
+    _G.AuctionHouseFrame = previousFrame
+end)
 test("actual queued commodity purchase completes on server event only", function()
     TEST.stock[200] = { bags = 0, bank = 0 }; AHT.DB.production.orders = {}; AHT.Production.active = nil
     AHT.Inventory.bankOpen = true; AHT.Inventory:RefreshBankItem(200); AHT.Inventory.bankOpen = false
