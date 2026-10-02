@@ -302,7 +302,7 @@ function AHT.UI:RefreshControls()
     end
     if self.opportunityMinimumButton then
         if opportunities then self.opportunityMinimumButton:Show() else self.opportunityMinimumButton:Hide() end
-        self.opportunityMinimumButton:SetText(string.format("Vorteil ≥ %d%%", self.minimumOpportunityPercent or 0))
+        self.opportunityMinimumButton:SetText(string.format("Vorteil >= %d%%", self.minimumOpportunityPercent or 0))
     end
     if self.materialLabel then
         if materials then self.materialLabel:Show() else self.materialLabel:Hide() end
@@ -373,7 +373,7 @@ function AHT.UI:ShowDatabaseRecovery(retryAttempted)
         MakeBackdrop(dialog)
         MakeDialogMovable(dialog)
 
-        dialog.title = Label(dialog, "WoW4E AH Trader – Daten nicht geladen", 420)
+        dialog.title = Label(dialog, "WoW4E AH Trader - Daten nicht geladen", 420)
         dialog.title:SetPoint("TOPLEFT", 16, -16)
         dialog.title:SetFontObject("GameFontHighlightLarge")
         dialog.title:SetTextColor(1, 0.84, 0.35)
@@ -402,7 +402,7 @@ function AHT.UI:ShowDatabaseRecovery(retryAttempted)
 
     local missing = type(WOW4E_AHT_DB) ~= "table"
     local canCreate = missing and not (AHT.Store and AHT.Store.canonicalDB) and type(AHT.DB) ~= "table"
-    local title = "WoW4E AH Trader – Daten nicht geladen"
+    local title = "WoW4E AH Trader - Daten nicht geladen"
     local message
     if retryAttempted and missing then
         title = "SavedVariables weiterhin nicht geladen"
@@ -411,8 +411,8 @@ function AHT.UI:ShowDatabaseRecovery(retryAttempted)
         title = "Datenbank weiterhin nicht verfügbar"
         message = "Die Datenbankprüfung ist erneut fehlgeschlagen. Es wurde nichts überschrieben. Beende WoW vollständig und prüfe die SavedVariables-Datei und ihre .bak-Sicherung, bevor du eine neue Datenbank anlegst."
     elseif canCreate then
-        title = "AH Trader – Erstinstallation oder fehlende Daten"
-        message = "Erstinstallation: „Neue Datenbank“ legt deine Sammlung an. Falls du zuvor Daten hattest, nicht neu anlegen! Die SavedVariables-Datenbank ist nicht verfügbar. „Erneut prüfen“ prüft nur den aktuellen Spielspeicher; WoW lädt die Datei nur beim Start. Wenn du bereits Daten hattest, lege keine neue Datenbank an. Prüfe nach beendetem Spiel die Datei und ihre .bak-Sicherung."
+        title = "AH Trader - Erstinstallation oder fehlende Daten"
+        message = "Erstinstallation: Neue Datenbank legt deine Sammlung an. Falls du zuvor Daten hattest, nicht neu anlegen! Die SavedVariables-Datenbank ist nicht verfügbar. Erneut prüfen prüft nur den aktuellen Spielspeicher; WoW lädt die Datei nur beim Start. Wenn du bereits Daten hattest, lege keine neue Datenbank an. Prüfe nach beendetem Spiel die Datei und ihre .bak-Sicherung."
     elseif missing then
         message = "Die globale SavedVariables-Referenz fehlt, aber AHT hält die zuvor geladene Tabelle noch im Speicher. Erneut prüfen versucht, diese Referenz wiederherzustellen."
     else
@@ -555,43 +555,65 @@ function AHT.UI:Create()
     self.moreButton = Button(self.frame, nil, "Mehr", 70, 24)
     self.moreButton:SetPoint("LEFT", self.ordersButton, "RIGHT", 8, 0)
 
-    self.scanButton = Button(self.frame, nil, "Scannen ▾", 120, 24)
+    self.scanButton = Button(self.frame, nil, "Scannen", 120, 24)
     self.scanButton:SetPoint("TOPRIGHT", -18, -70)
     self.scanButton:SetScript("OnClick", function()
         if AHT.Scanner.running or AHT.Scanner.marketDiscovery then
             AHT.Scanner:Stop("user")
             if self.scanMenu then self.scanMenu:Hide() end
         else
-            if self.scanMenu:IsShown() then self.scanMenu:Hide() else self.scanMenu:Show() end
+            if self.scanMenu:IsShown() then
+                self.scanMenu:Hide()
+            else
+                self.scanMenuButtons[4]:SetText(string.format("Rezeptmaterialien (%d)", #AHT.Scanner:BuildRecipeMaterialTargets()))
+                self.scanMenuButtons[5]:SetText(string.format("Markierte Rezepte (%d)", self:GetSelectedRecipeCount()))
+                self.scanMenu:Show()
+            end
         end
         self:RefreshStatus()
     end)
 
     self.scanMenu = CreateFrame("Frame", nil, self.frame, template)
-    self.scanMenu:SetSize(190, 112)
     self.scanMenu:SetPoint("TOPRIGHT", self.scanButton, "BOTTOMRIGHT", 0, -4)
     self.scanMenu:SetFrameStrata("TOOLTIP")
     MakeBackdrop(self.scanMenu)
-    local function AddScanOption(label, y, callback)
-        local option = Button(self.scanMenu, nil, label, 164, 26)
-        option:SetPoint("TOPLEFT", 12, y)
+    self.scanOptions = {
+        { label = "Bekannte Items", action = function() AHT.Scanner:Start(nil, "known") end },
+        { label = "Ganzer AH-Markt", action = function() AHT.Scanner:StartMarketDiscovery() end },
+        { label = "Ausgewähltes Item", action = function()
+            local result = self.selectedResult
+            local item = result and (result.output or result)
+            if item and item.itemID then
+                AHT.Scanner:Start({ { itemID = item.itemID, itemKey = item.itemKey, name = item.name, kind = item.kind } }, "selected")
+            else
+                self:AddMessage("Wähle zuerst ein Item in der Liste aus.")
+            end
+        end },
+        { label = "Rezeptmaterialien scannen", action = function()
+            AHT.Scanner:Start(AHT.Scanner:BuildRecipeMaterialTargets(), "recipe_materials")
+        end },
+        { label = "Markierte Rezepte scannen", action = function()
+            AHT.Scanner:Start(AHT.Scanner:BuildSelectedRecipeTargets(), "selected_recipes")
+        end },
+        { label = "Gefilterte Rezepte markieren", action = function() self:SetVisibleRecipeSelection(true) end },
+        { label = "Rezeptmarkierungen löschen", action = function() self:SetVisibleRecipeSelection(false, true) end },
+    }
+    self.scanMenu:SetSize(250, 28 + #self.scanOptions * 31)
+    self.scanMenuButtons = self.scanMenuButtons or {}
+    for index, optionData in ipairs(self.scanOptions) do
+        local option = self.scanMenuButtons[index] or Button(self.scanMenu, nil, "", 226, 26)
+        local action = optionData.action
+        self.scanMenuButtons[index] = option
+        option:ClearAllPoints()
+        option:SetPoint("TOPLEFT", 12, -9 - (index - 1) * 31)
+        option:SetText(optionData.label)
         option:SetScript("OnClick", function()
             self.scanMenu:Hide()
-            callback()
+            action()
             self:RefreshStatus()
         end)
+        option:Show()
     end
-    AddScanOption("Bekannte Items", -9, function() AHT.Scanner:Start(nil, "known") end)
-    AddScanOption("Ganzer AH-Markt", -41, function() AHT.Scanner:StartMarketDiscovery() end)
-    AddScanOption("Ausgewähltes Item", -73, function()
-        local result = self.selectedResult
-        local item = result and (result.output or result)
-        if item and item.itemID then
-            AHT.Scanner:Start({ { itemID = item.itemID, itemKey = item.itemKey, name = item.name, kind = item.kind } }, "selected")
-        else
-            AHT:Print("Wähle zuerst ein Item in der Liste aus.")
-        end
-    end)
 
     self.transmuteButton = Button(self.frame, nil, "Transmute", 105, 24)
     self.transmuteButton:SetPoint("TOPLEFT", 360, -99)
@@ -608,7 +630,7 @@ function AHT.UI:Create()
     self.opportunityDirectionButton = Button(self.frame, nil, "Alle Chancen", 122, 24)
     self.opportunityDirectionButton:SetPoint("TOPLEFT", 360, -99)
     self.opportunityDirectionButton:SetScript("OnClick", function() self:CycleOpportunityDirection() end)
-    self.opportunityMinimumButton = Button(self.frame, nil, "Vorteil ≥ 0%", 124, 24)
+    self.opportunityMinimumButton = Button(self.frame, nil, "Vorteil >= 0%", 124, 24)
     self.opportunityMinimumButton:SetPoint("TOPLEFT", 490, -99)
     self.opportunityMinimumButton:SetScript("OnClick", function() self:CycleOpportunityMinimum() end)
 
@@ -790,6 +812,7 @@ function AHT.UI:CreateRow(index)
         row.cells[cellIndex] = text
     end
     row:SetScript("OnClick", function(_, button)
+        if row.scanCheckbox and row.scanCheckbox:IsMouseOver() then return end
         if button == "LeftButton" and type(IsControlKeyDown) == "function" and IsControlKeyDown() then
             if row.result and row.result.output and #(row.result.reagents or {}) > 0 then
                 self:OpenRecipeInAuctionHouse(row.result)
@@ -971,7 +994,7 @@ function AHT.UI:CreateAHRecipeRow(index)
 end
 
 local function AHRecipeListingText(entry)
-    if entry.loading then return "Listings werden geladen …" end
+    if entry.loading then return "Listings werden geladen..." end
     if not entry.loaded then return "Listings noch nicht geladen." end
     if entry.error then return "Listing-Suche fehlgeschlagen: " .. tostring(entry.error) end
     if not entry.results or #entry.results == 0 then return "Keine aktuellen Listings." end
@@ -984,7 +1007,7 @@ local function AHRecipeListingText(entry)
             AHT:FormatMoneyPlain(listing.unitPrice or 0)
         ))
     end
-    if #entry.results > 8 then table.insert(parts, "…") end
+    if #entry.results > 8 then table.insert(parts, "...") end
     return "Listings: " .. table.concat(parts, " | ")
 end
 
@@ -1066,7 +1089,7 @@ function AHT.UI:RenderAHRecipePanel()
     outputRow.title:SetText(tostring(outputEntry and outputEntry.name or "?"))
     outputRow.details:SetText(outputEntry and outputEntry.loaded and
         string.format("Aktuell: %s | Gesamtmenge im AH: %d", outputEntry.results[1] and AHT:FormatMoneyPlain(outputEntry.results[1].unitPrice or 0) or "?", outputEntry.meta and outputEntry.meta.totalQuantity or 0) or
-        "Suche aktuelle Listings …")
+        "Suche aktuelle Listings...")
     outputRow.listings:SetText(AHRecipeListingText(outputEntry or {}))
     outputRow:Show()
     offset = offset + 80
@@ -1104,19 +1127,19 @@ function AHT.UI:RenderAHRecipePanel()
             row.buy:SetText("Kauf auslösen")
             row.buy:Enable()
         elseif entry.buyState == "checking" then
-            row.buy:SetText("Preisprüfung …")
+            row.buy:SetText("Preisprüfung...")
             row.buy:Disable()
         elseif entry.buyState == "error" then
             row.buy:SetText("Erneut prüfen")
             row.buy:Enable()
         elseif entry.buyState == "buying" or entry.buyState == "submitted" then
-            row.buy:SetText("Kauf läuft …")
+            row.buy:SetText("Kauf läuft...")
             row.buy:Disable()
         elseif entry.buyState == "done" or (entry.toBuy or 0) <= 0 then
             row.buy:SetText("Bestand reicht")
             row.buy:Disable()
         elseif not entry.loaded then
-            row.buy:SetText("Lade …")
+            row.buy:SetText("Lade...")
             row.buy:Disable()
         elseif not entry.plan or entry.plan.missing > 0 then
             row.buy:SetText("Nicht genug")
@@ -1175,7 +1198,7 @@ function AHT.UI:StartAHRecipeListingScan(recipe)
     self.ahCraftMaterials = materials
     self.ahCraftEntries = { self.ahCraftOutput }
     for _, entry in ipairs(materials) do table.insert(self.ahCraftEntries, entry) end
-    self.ahRecipeStatus = "Suche aktuelle Listings für Ergebnis und Materialien …"
+    self.ahRecipeStatus = "Suche aktuelle Listings für Ergebnis und Materialien..."
     self:RecalculateAHRecipeEntries()
     self:RenderAHRecipePanel()
 
@@ -1341,6 +1364,7 @@ end
 
 function AHT.UI:LayoutTable()
     local columns = self:GetActiveColumns()
+    local recipeRows = self.viewMode == "recipes" or self.viewMode == "transmute"
     local width = math.max(700, (self.frame:GetWidth() or 780) - 80)
     local total = 0
     for _, column in ipairs(columns) do total = total + column.width end
@@ -1353,13 +1377,18 @@ function AHT.UI:LayoutTable()
         header:ClearAllPoints()
         header:SetWidth(cellWidth)
         header:SetPoint("LEFT", offset, 0)
+        if index == 1 then
+            header.label:ClearAllPoints()
+            header.label:SetPoint("LEFT", recipeRows and 47 or 7, 0)
+            header.label:SetPoint("RIGHT", -7, 0)
+        end
         for _, row in ipairs(self.rows) do
             row:SetWidth(width)
             row.info:SetWidth(width - 36)
             local cell = row.cells[index]
             cell:ClearAllPoints()
-            cell:SetPoint("LEFT", offset + (index == 1 and 28 or 6), 0)
-            cell:SetWidth(cellWidth - (index == 1 and 34 or 12))
+            cell:SetPoint("LEFT", offset + (index == 1 and (recipeRows and 47 or 28) or 6), 0)
+            cell:SetWidth(cellWidth - (index == 1 and (recipeRows and 55 or 34) or 12))
             cell:SetJustifyH(index == 1 and "LEFT" or "RIGHT")
         end
         offset = offset + cellWidth
@@ -1400,9 +1429,13 @@ function AHT.UI:UpdateHeaders()
         local header = self.headers[index]
         local marker = ""
         if self.sortColumn == column.key then
-            marker = self.sortAscending and "  |cff66ff66▲|r" or "  |cffffaa44▼|r"
+            marker = self.sortAscending and "  |cff66ff66[A]|r" or "  |cffffaa44[D]|r"
         end
-        header.label:SetText(column.label .. marker)
+        local label = column.label
+        if index == 1 and (self.viewMode == "recipes" or self.viewMode == "transmute") then
+            label = "Scan | " .. label
+        end
+        header.label:SetText(label .. marker)
     end
 end
 
@@ -1740,7 +1773,7 @@ function AHT.UI:RefreshStatus()
     local help = self.lastMessage ~= "" and self.lastMessage or view.help
     if self.viewHelp then self.viewHelp:SetText(help) end
     local scanning = AHT.Scanner and (AHT.Scanner.running or AHT.Scanner.marketDiscovery or AHT.Scanner.replication)
-    self.scanButton:SetText(scanning and "Abbrechen" or "Scannen ▾")
+    self.scanButton:SetText(scanning and "Abbrechen" or "Scannen")
 end
 
 function AHT.UI:BuildMaterialRows()

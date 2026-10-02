@@ -122,6 +122,30 @@ function AHT.Scanner:BuildTargets()
     return targets
 end
 
+function AHT.Scanner:BuildRecipeMaterialTargets()
+    local targets, seen = {}, {}
+    for _, recipe in ipairs(AHT.Recipes and AHT.Recipes:GetList() or {}) do
+        for _, reagent in ipairs(recipe.reagents or {}) do
+            AddTarget(targets, seen, reagent)
+        end
+    end
+    return targets
+end
+
+function AHT.Scanner:BuildSelectedRecipeTargets()
+    local targets, seen = {}, {}
+    local selection = AHT.DB and AHT.DB.ui and AHT.DB.ui.recipeScanSelection or {}
+    for _, recipe in ipairs(AHT.Recipes and AHT.Recipes:GetList() or {}) do
+        if selection[tostring(recipe.recipeID)] then
+            AddTarget(targets, seen, recipe.output)
+            for _, reagent in ipairs(recipe.reagents or {}) do
+                AddTarget(targets, seen, reagent)
+            end
+        end
+    end
+    return targets
+end
+
 function AHT.Scanner:StartAll()
     return self:Start(self:BuildTargets(), "all")
 end

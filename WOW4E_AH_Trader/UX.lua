@@ -28,7 +28,7 @@ local function Input(parent, width, numeric)
 end
 
 local function Money(value)
-    if value == nil then return "—" end
+    if value == nil then return "-" end
     if GetMoneyString then return (value < 0 and "-" or "") .. GetMoneyString(math.floor(math.abs(value)), true) end
     return AHT:FormatMoneyPlain(value)
 end
@@ -133,6 +133,70 @@ function UI:SetView(view)
     if self.frame and self.selectedKey then self:Refresh(true) end
 end
 
+local function RecipeScanSelection()
+    local ui = AHT.DB and AHT.DB.ui
+    if not ui then return {} end
+    if type(ui.recipeScanSelection) ~= "table" then ui.recipeScanSelection = {} end
+    return ui.recipeScanSelection
+end
+
+function UI:GetSelectedRecipeCount()
+    local selection, count = RecipeScanSelection(), 0
+    for _, recipe in ipairs(AHT.Recipes and AHT.Recipes:GetList() or {}) do
+        if selection[tostring(recipe.recipeID)] then count = count + 1 end
+    end
+    return count
+end
+
+function UI:SetVisibleRecipeSelection(checked, clearAll)
+    if not AHT.DB or not AHT.Store then return false end
+    local selection = RecipeScanSelection()
+    if clearAll then
+        for key in pairs(selection) do selection[key] = nil end
+    elseif self.viewMode ~= "recipes" and self.viewMode ~= "transmute" then
+        self:AddMessage("Wechsle zu Herstellen, um Rezepte zu markieren.")
+        return false
+    else
+        for _, result in ipairs(self.visibleResults or {}) do
+            if result.recipeID then
+                local key = tostring(result.recipeID)
+                if checked then selection[key] = true else selection[key] = nil end
+            end
+        end
+    end
+    AHT.Store:Save()
+    if self.frame and self.frame:IsShown() then self:RenderVisibleRows() end
+    return true
+end
+
+local baseCreateRow = UI.CreateRow
+function UI:CreateRow(index)
+    local row = baseCreateRow(self, index)
+    local checkbox = CreateFrame("CheckButton", nil, row, "UICheckButtonTemplate")
+    checkbox:SetSize(18, 18)
+    checkbox:SetPoint("LEFT", row, "LEFT", 3, 0)
+    checkbox:SetFrameLevel(row:GetFrameLevel() + 2)
+    checkbox:SetScript("OnClick", function(button)
+        local result = row.result
+        if not result or not result.recipeID then return end
+        local selection = RecipeScanSelection()
+        local key = tostring(result.recipeID)
+        if button:GetChecked() then selection[key] = true else selection[key] = nil end
+        if AHT.Store then AHT.Store:Save() end
+        self:RefreshStatus()
+    end)
+    checkbox:SetScript("OnEnter", function(button)
+        if not GameTooltip then return end
+        GameTooltip:SetOwner(button, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Für Rezeptscan markieren")
+        GameTooltip:Show()
+    end)
+    checkbox:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
+    checkbox:Hide()
+    row.scanCheckbox = checkbox
+    return row
+end
+
 local moneyKeys = { costPerOutput = true, salePrice = true, profitPerOutput = true, ingredientCost = true,
     profit = true, currentPrice = true, marketValue = true, averagePrice = true, spent = true }
 local percentKeys = { margin = true, discount = true, marketTrendPercent = true, priceChangePercent = true }
@@ -153,6 +217,7 @@ function UI:RenderVisibleRows()
         row:ClearAllPoints()
         row:SetPoint("TOPLEFT", 0, -(index - 1) * ROW_HEIGHT)
         row.icon:Hide()
+        if row.scanCheckbox then row.scanCheckbox:Hide() end
         for _, cell in ipairs(row.cells) do cell:Hide(); cell:SetTextColor(1, 1, 1) end
         row.info:Hide()
         if result then
@@ -160,6 +225,18 @@ function UI:RenderVisibleRows()
             row.bg:SetColorTexture(selected and 0.20 or 0.035, selected and 0.14 or 0.035, selected and 0.05 or 0.035, 1)
             if result.kind == "info" then row.info:SetText(result.text); row.info:Show() else
                 local item = result.output or result
+                local isRecipe = (self.viewMode == "recipes" or self.viewMode == "transmute")
+                    and result.recipeID ~= nil and result.output ~= nil
+                if row.scanCheckbox then
+                    if isRecipe then
+                        row.scanCheckbox:SetChecked(RecipeScanSelection()[tostring(result.recipeID)] == true)
+                        row.scanCheckbox:Show()
+                    else
+                        row.scanCheckbox:SetChecked(false)
+                    end
+                end
+                row.icon:ClearAllPoints()
+                row.icon:SetPoint("LEFT", row, "LEFT", isRecipe and 25 or 5, 0)
                 if item.itemID then
                     local _, _, quality, _, _, _, _, _, _, icon = AHT:GetItemInfo(item.itemID)
                     if icon then row.icon:SetTexture(icon); row.icon:Show() end
@@ -171,14 +248,14 @@ function UI:RenderVisibleRows()
                 for cellIndex, column in ipairs(columns) do
                     local value = result[column.key]
                     if column.key == "name" then
-                        value = (result.isWatched and "★ " or "") .. (result.side == "buy" and "Kauf: " or result.side == "sell" and "Verkauf: " or "") .. tostring(result.name or "?")
+                        value = (result.isWatched and "* " or "") .. (result.side == "buy" and "Kauf: " or result.side == "sell" and "Verkauf: " or "") .. tostring(result.name or "?")
                     elseif moneyKeys[column.key] then value = Money(value)
-                    elseif percentKeys[column.key] then value = value and string.format("%+.1f%%", value) or "—"
+                    elseif percentKeys[column.key] then value = value and string.format("%+.1f%%", value) or "-"
                     elseif column.key == "updatedAt" then
                         local age = value and math.max(0, AHT:Now() - value)
-                        value = age and (age < 3600 and string.format("%d Min.", math.floor(age / 60)) or string.format("%.1f Std.", age / 3600)) or "—"
+                        value = age and (age < 3600 and string.format("%d Min.", math.floor(age / 60)) or string.format("%.1f Std.", age / 3600)) or "-"
                     end
-                    row.cells[cellIndex]:SetText(tostring(value == nil and "—" or value))
+                    row.cells[cellIndex]:SetText(tostring(value == nil and "-" or value))
                     row.cells[cellIndex]:Show()
                     if column.key == "profitPerOutput" or column.key == "profit" then
                         row.cells[cellIndex]:SetTextColor((result[column.key] or 0) > 0 and 0.35 or 1, (result[column.key] or 0) > 0 and 1 or 0.45, 0.35)
@@ -238,7 +315,7 @@ function UI:Dropdown(anchor, options)
 end
 
 function UI:ShowFilters(column)
-    local frame = self:Window("filters", "Filter – " .. (column and column.label or "diese Ansicht"), 450, 360)
+    local frame = self:Window("filters", "Filter - " .. (column and column.label or "diese Ansicht"), 450, 360)
     frame.inputs = frame.inputs or {}
     for _, entry in ipairs(frame.inputs) do entry.label:Hide(); entry.box:Hide() end
     local fields = column and {{ "min", "Minimum" }, { "max", "Maximum" }, { "text", "Enthält" }} or {
@@ -278,7 +355,7 @@ function UI:ShowFilters(column)
 end
 
 function UI:ShowSettings()
-    local frame = self:Window("settings", "AH Trader – Einstellungen", 490, 475)
+    local frame = self:Window("settings", "AH Trader - Einstellungen", 490, 475)
     local fields = {
         { "minMarginPercent", "Mindestmarge (%)", 0, 10000 }, { "budgetCopper", "Auftragsbudget (Kupfer; 0 = Goldbestand)", 0, 1000000000000 },
         { "productionPriceSlippagePercent", "Preistoleranz (%)", 0, 100 }, { "maxPriceAgeSeconds", "Max. Preisalter (Sekunden)", 60, 2592000 },
@@ -301,7 +378,7 @@ function UI:ShowSettings()
     end
     frame.strategy = frame.strategy or Button(frame, "", 160)
     frame.strategy:SetPoint("BOTTOMLEFT", 16, 83)
-    frame.strategy:SetText(AHT.DB.settings.sellStrategy == "match" and "Preis angleichen ▾" or "Unterbieten (1c) ▾")
+    frame.strategy:SetText(AHT.DB.settings.sellStrategy == "match" and "Preis angleichen" or "Unterbieten (1c)")
     frame.strategy:SetScript("OnClick", function() self:Dropdown(frame.strategy, {
         { label = "Aktuellen Preis angleichen", action = function() AHT.DB.settings.sellStrategy = "match"; self:ShowSettings() end },
         { label = "Um 1 Kupfer unterbieten", action = function() AHT.DB.settings.sellStrategy = "undercut"; self:ShowSettings() end },
@@ -327,14 +404,14 @@ end
 function UI:ShowHistory(result, days)
     local item = result.output or result
     days = days or 30
-    local frame = self:Window("history", "Preisverlauf – " .. tostring(result.name or item.name or item.itemID), 700, 420)
+    local frame = self:Window("history", "Preisverlauf - " .. tostring(result.name or item.name or item.itemID), 700, 420)
     local points = AHT.Commerce:PriceHistory(item.itemID, item.itemKey, days)
     local snapshot = AHT.Store:GetMarketSnapshot(item.itemID, item.itemKey)
     frame.summary = frame.summary or Text(frame, "", 650)
     frame.summary:SetPoint("TOPLEFT", 16, -53)
     frame.summary:SetText(string.format("Aktuell %s | Ø %s | %d Beobachtungstage | Quelle: %s\nÄnderung zum letzten Scan: %s | Verteilung: %s",
         Money(snapshot and snapshot.currentPrice), Money(snapshot and snapshot.averagePrice), #points,
-        AHT.Commerce:SourceText(snapshot and snapshot.source), snapshot and snapshot.priceChangePercent and string.format("%+.1f%%", snapshot.priceChangePercent) or "—",
+        AHT.Commerce:SourceText(snapshot and snapshot.source), snapshot and snapshot.priceChangePercent and string.format("%+.1f%%", snapshot.priceChangePercent) or "-",
         snapshot and snapshot.distributionAt and date("%d.%m. %H:%M", snapshot.distributionAt) or "nicht bekannt"))
     frame.graph = frame.graph or CreateFrame("Frame", nil, frame)
     frame.graph:SetPoint("TOPLEFT", 60, -117)
@@ -389,7 +466,7 @@ function UI:Create()
     end)
     self.escapeFrame:Hide()
     self.frame:HookScript("OnShow", function() self.escapeFrame:Show() end)
-    self.filterOptions = Button(self.frame, "Filter ▾", 95, function() self:ShowFilters() end)
+    self.filterOptions = Button(self.frame, "Filter", 95, function() self:ShowFilters() end)
     self.filterOptions:SetPoint("TOPRIGHT", -18, -132)
     self.clearFilters = Button(self.frame, "Filter löschen", 105, function()
         self.numericFilters, self.searchQuery, self.profitOnly, self.marketFilter, self.professionFilter = {}, "", false, "all", nil
@@ -399,7 +476,7 @@ function UI:Create()
     self.clearFilters:SetPoint("RIGHT", self.filterOptions, "LEFT", -7, 0)
     self.viewTitle:SetWidth(410)
     self.viewHelp:SetWidth(700)
-    self.recent = Button(self.frame, "▾", 25, function()
+    self.recent = Button(self.frame, "Letzte", 52, function()
         local options = {}
         for _, query in ipairs(AHT.DB.recentSearches) do
             table.insert(options, { label = query, action = function() self.searchInput:SetText(query) end })
@@ -407,7 +484,7 @@ function UI:Create()
         self:Dropdown(self.recent, options)
     end)
     self.recent:SetPoint("RIGHT", self.searchInput, "RIGHT", 0, 0)
-    self.searchInput:SetTextInsets(6, 26, 0, 0)
+    self.searchInput:SetTextInsets(6, 56, 0, 0)
     self.filterButton:SetScript("OnClick", function()
         local options = self.viewMode == "materials" and {
             { label = "Alle Items", action = function() self.marketFilter = "all" end },
@@ -516,15 +593,15 @@ function UI:RefreshControls()
     if self.opportunityMinimumButton then
         local conditions = (self.numericFilters or {}).columns or {}
         local minimum = conditions.discount and conditions.discount.min or self.minimumOpportunityPercent or 0
-        self.opportunityMinimumButton:SetText(string.format("Vorteil ≥ %.0f%% ▾", minimum))
+        self.opportunityMinimumButton:SetText(string.format("Vorteil >= %.0f%%", minimum))
     end
-    if self.filterButton then self.filterButton:SetText(self.viewMode == "materials" and (({ all = "Alle ▾", watched = "Beobachtet ▾", inventory = "Bestand ▾" })[self.marketFilter] or "Alle ▾") or (self.profitOnly and "Profitabel ▾" or "Alle ▾")) end
+    if self.filterButton then self.filterButton:SetText(self.viewMode == "materials" and (({ all = "Alle", watched = "Beobachtet", inventory = "Bestand" })[self.marketFilter] or "Alle") or (self.profitOnly and "Profitabel" or "Alle")) end
     if self.clearFilters then
         local count = 0
         for key, value in pairs(self.numericFilters or {}) do
             if key == "columns" then for _ in pairs(value) do count = count + 1 end elseif value then count = count + 1 end
         end
-        self.clearFilters:SetText(count > 0 and ("Filter (" .. count .. ") ×") or "Zurücksetzen")
+        self.clearFilters:SetText(count > 0 and ("Filter (" .. count .. ") x") or "Zurücksetzen")
     end
 end
 
@@ -565,7 +642,7 @@ function UI:RenderBuyDialog()
     local outputs = math.max(1, math.floor(tonumber(frame.quantity:GetText()) or 1))
     local crafts = order and order.crafts or math.ceil(outputs / math.max(1, result.output.quantity or 1))
     frame.quantity:SetEnabled(order == nil)
-    frame.quantityInfo:SetText(string.format("%d Herstellvorgänge → %d fertige Items%s", crafts, crafts * math.max(1, result.output.quantity or 1),
+    frame.quantityInfo:SetText(string.format("%d Herstellvorgänge, ergibt %d fertige Items%s", crafts, crafts * math.max(1, result.output.quantity or 1),
         crafts * math.max(1, result.output.quantity or 1) ~= outputs and " (aufgerundet)" or ""))
     local requirements = order and order.requirements or {}
     if not order then
@@ -608,15 +685,15 @@ function UI:RenderBuyDialog()
     frame.materialContent:SetHeight(math.max(270, #requirements * 30))
     local preview = order and order.preview
     local status = order and order.status or "new"
-    local statusText = ({ new = "Zielmenge eingeben und Preise prüfen.", previewing = "Aktuelle Angebote werden geprüft…",
-        checking = "Preise und Gesamtmarge werden erneut geprüft…", ready = "Plan geprüft. Einkauf vorbereiten.",
-        buying = "Live-Angebote werden geprüft…", awaiting_purchase = "Kauf ist vorbereitet. Bitte auslösen.",
-        awaiting_confirmation = "Live-Gesamtsumme bestätigen.", submitted = "Warte auf Kaufbestätigung des Servers…",
+    local statusText = ({ new = "Zielmenge eingeben und Preise prüfen.", previewing = "Aktuelle Angebote werden geprüft...",
+        checking = "Preise und Gesamtmarge werden erneut geprüft...", ready = "Plan geprüft. Einkauf vorbereiten.",
+        buying = "Live-Angebote werden geprüft...", awaiting_purchase = "Kauf ist vorbereitet. Bitte auslösen.",
+        awaiting_confirmation = "Live-Gesamtsumme bestätigen.", submitted = "Warte auf Kaufbestätigung des Servers...",
         next_ready = "Nächste Zutat vorbereiten.", ready_to_craft = "Alle Zutaten eingeplant/gekauft. Bank oder Post ggf. abholen.",
         paused = "Einkauf pausiert. Preise erneut prüfen.", incomplete = "Materialmenge oder Preis fehlt.", cancelled = "Auftrag storniert." })[status] or status
     frame.summary:SetText(preview and string.format("Ausgegeben %s  |  Noch zu kaufen %s  |  Gesamt %s\nMaterialwert inkl. Bestand %s  |  Erlös nach AH-Gebühr %s\nAuftragsgewinn %s  |  Marge %s  |  Minimum %.1f%%  |  Budget: %s",
         Money(preview.spent or 0), Money(preview.remainingCost), Money(preview.cashCost), Money(preview.economicCost),
-        Money(preview.net), Money(preview.profit), preview.margin and string.format("%.1f%%", preview.margin) or "—",
+        Money(preview.net), Money(preview.profit), preview.margin and string.format("%.1f%%", preview.margin) or "-",
         preview.minimumMargin or 0, preview.meetsBudget and "OK" or "überschritten")
         or "Keine Nachfrageprognose. Die Mengenprüfung berücksichtigt aktuelle Material-Preisstaffeln, Bestand, Reservierungen, Marge und Budget.")
     frame.status:SetText(frame.message or (order and order.lastError and AHT:ErrorText(order.lastError)) or statusText)
@@ -628,7 +705,7 @@ function UI:RenderBuyDialog()
         frame.action:SetText("Kauf auslösen"); frame.action:Enable()
     elseif ownPending and pending.state == "awaiting_user_confirmation" then
         frame.action:SetText("Kauf bestätigen"); frame.action:Enable()
-        frame.status:SetText(string.format("%dx %s: %s pro Stück – GESAMT %s. Nur dieser Klick kauft.",
+        frame.status:SetText(string.format("%dx %s: %s pro Stück - GESAMT %s. Nur dieser Klick kauft.",
             pending.quantity or 0, pending.plan.target.name or "Material", Money(pending.unitPrice), Money(pending.totalPrice)))
     elseif order and not pending and preview and preview.complete and preview.meetsMargin and preview.meetsBudget
             and status ~= "ready_to_craft" and status ~= "cancelled" and status ~= "previewing" and status ~= "checking" then
@@ -641,7 +718,7 @@ function UI:ShowBuyDialog(result, existingOrder)
     if self.actionDialog then self.actionDialog:Hide() end
     if not result or not result.output or #(result.reagents or {}) == 0 then AHT:Print("Keine Zutaten für dieses Rezept bekannt.") return end
     if AHT.Buyer.pending then AHT:Print(AHT:ErrorText("purchase_in_progress")); return end
-    local frame = self:Window("buy", "Einkauf planen – " .. (result.name or "?"), 850, 580)
+    local frame = self:Window("buy", "Einkauf planen - " .. (result.name or "?"), 850, 580)
     self.buyDialog = frame
     frame.result, frame.order, frame.message = result, existingOrder, nil
     if frame.complete then frame.complete:Hide() end
@@ -651,7 +728,7 @@ function UI:ShowBuyDialog(result, existingOrder)
         frame.quantity:SetScript("OnTextChanged", function() if frame.result then self:RenderBuyDialog() end end)
         frame.quantityInfo = Text(frame, "", 360); frame.quantityInfo:SetPoint("LEFT", frame.quantity, "RIGHT", 15, 0)
         frame.suggest = Button(frame, "Menge berechnen", 145, function()
-            frame.suggest:Disable(); frame.message = "Preisstaffeln und profitable Menge werden geprüft…"; self:RenderBuyDialog()
+            frame.suggest:Disable(); frame.message = "Preisstaffeln und profitable Menge werden geprüft..."; self:RenderBuyDialog()
             AHT.Production:RefreshSuggestion(frame.result, function(suggestion, reason)
                 if reason then frame.message = AHT:ErrorText(reason) else
                     local count = suggestion.suggestedCrafts * math.max(1, frame.result.output.quantity or 1)
@@ -729,7 +806,7 @@ function UI:ShowLists()
         frame.text = Text(frame.content, "", 590); frame.text:SetPoint("TOPLEFT"); frame.text:SetJustifyV("TOP")
         frame.live = Button(frame, "Offene Aufträge", 140, function() frame.list = { name = frame.listName:GetText(), lines = AHT.Commerce:AggregateShopping() }; self:RenderList(frame) end)
         frame.live:SetPoint("TOPLEFT", 24, -81)
-        frame.load = Button(frame, "Liste laden ▾", 130, function()
+        frame.load = Button(frame, "Liste laden", 130, function()
             local options = {}
             for name, list in pairs(AHT.DB.shoppingLists) do table.insert(options, { label = name, action = function() frame.list = list; frame.listName:SetText(name); self:RenderList(frame) end }) end
             table.sort(options, function(a, b) return a.label < b.label end)
@@ -803,7 +880,7 @@ end
 
 function UI:ShowItemPurchase(result)
     if AHT.Buyer.pending then AHT:Print(AHT:ErrorText("purchase_in_progress")); return end
-    local frame = self:Window("itembuy", "Listings und Einkauf – " .. tostring(result.name), 650, 480)
+    local frame = self:Window("itembuy", "Listings und Einkauf - " .. tostring(result.name), 650, 480)
     frame.result, frame.plan = result, nil
     if not frame.quantity then
         local label = Text(frame, "Gewünschte Stückzahl:", 180); label:SetPoint("TOPLEFT", 16, -55)
@@ -815,7 +892,7 @@ function UI:ShowItemPurchase(result)
         frame.listings = Text(frame.content, "", 570); frame.listings:SetPoint("TOPLEFT"); frame.listings:SetJustifyV("TOP")
         frame.status = Text(frame, "", 600); frame.status:SetPoint("BOTTOMLEFT", 16, 52); frame.status:SetHeight(35)
         frame.preview = Button(frame, "Preise prüfen", 150, function()
-            frame.preview:Disable(); frame.action:Disable(); frame.status:SetText("Aktuelle Angebote prüfen…")
+            frame.preview:Disable(); frame.action:Disable(); frame.status:SetText("Aktuelle Angebote prüfen...")
             AHT.AH:Search(frame.result, function(offers, meta)
                 frame.preview:Enable()
                 if meta.error then frame.status:SetText(AHT:ErrorText(meta.error)); return end
@@ -866,7 +943,7 @@ function UI:ShowItemPurchase(result)
                     if state == "ready" then frame.action:SetText("Kauf auslösen"); frame.action:Enable()
                     elseif state == "price" then
                         frame.action:SetText("Kauf bestätigen"); frame.action:Enable()
-                        frame.status:SetText(string.format("%d Stück zu %s – gesamt %s", data.quantity, Money(data.unitPrice), Money(data.totalPrice)))
+                        frame.status:SetText(string.format("%d Stück zu %s - gesamt %s", data.quantity, Money(data.unitPrice), Money(data.totalPrice)))
                     elseif state == "completed" then
                         frame.plan = nil; frame.action:Disable(); frame.preview:Enable()
                         frame.status:SetText("Server bestätigt: " .. (data.purchasedQuantity or 0) .. " Stück für " .. Money(data.actualTotal))
@@ -922,10 +999,10 @@ function UI:ShowSellingWorkspace(result)
         local g, s, c = Text(frame, "g"), Text(frame, "s"), Text(frame, "c")
         g:SetPoint("LEFT", frame.gold, "RIGHT", 3, 0); s:SetPoint("LEFT", frame.silver, "RIGHT", 3, 0); c:SetPoint("LEFT", frame.copper, "RIGHT", 3, 0)
         frame.duration = 2
-        frame.durationButton = Button(frame, "8 Stunden ▾", 125, function() self:Dropdown(frame.durationButton, {
-            { label = "2 Stunden", action = function() frame.duration = 1; frame.durationButton:SetText("2 Stunden ▾"); frame.confirm:Disable() end },
-            { label = "8 Stunden", action = function() frame.duration = 2; frame.durationButton:SetText("8 Stunden ▾"); frame.confirm:Disable() end },
-            { label = "24 Stunden", action = function() frame.duration = 3; frame.durationButton:SetText("24 Stunden ▾"); frame.confirm:Disable() end },
+        frame.durationButton = Button(frame, "8 Stunden", 125, function() self:Dropdown(frame.durationButton, {
+            { label = "2 Stunden", action = function() frame.duration = 1; frame.durationButton:SetText("2 Stunden"); frame.confirm:Disable() end },
+            { label = "8 Stunden", action = function() frame.duration = 2; frame.durationButton:SetText("8 Stunden"); frame.confirm:Disable() end },
+            { label = "24 Stunden", action = function() frame.duration = 3; frame.durationButton:SetText("24 Stunden"); frame.confirm:Disable() end },
         }) end)
         frame.durationButton:SetPoint("TOPLEFT", 300, -200)
         frame.refresh = Button(frame, "Angebote prüfen", 150, function() self:RefreshSellPreview() end)
@@ -943,7 +1020,7 @@ function UI:ShowSellingWorkspace(result)
             end
             local ok, errorMessage = AHT.Poster:Post(plan)
             frame.confirm:Disable()
-            frame.status:SetText(ok and "Warte auf Bestätigung des Servers…" or AHT:ErrorText(errorMessage or "api_rejected"))
+            frame.status:SetText(ok and "Warte auf Bestätigung des Servers..." or AHT:ErrorText(errorMessage or "api_rejected"))
         end)
         frame.confirm:SetPoint("BOTTOMLEFT", 300, 16)
         frame.confirm:Disable()
@@ -963,7 +1040,7 @@ function UI:ShowSellingWorkspace(result)
         frame.bagScroll:HookScript("OnVerticalScroll", function() self:RenderSellBags() end)
     end
     frame.duration = AHT.DB.settings.defaultDuration or 2
-    frame.durationButton:SetText(({ "2 Stunden ▾", "8 Stunden ▾", "24 Stunden ▾" })[frame.duration] or "8 Stunden ▾")
+    frame.durationButton:SetText(({ "2 Stunden", "8 Stunden", "24 Stunden" })[frame.duration] or "8 Stunden")
     if result then self:SelectSellItem(result) end
     self:RenderSellingWorkspace(); frame:Show()
 end
@@ -989,7 +1066,7 @@ function UI:SelectSellItem(result)
     frame.gold:SetText(tostring(math.floor(price / 10000))); frame.silver:SetText(tostring(math.floor(price % 10000 / 100))); frame.copper:SetText(tostring(price % 100))
     local _, total = AHT.Poster:GetStock(result.output.itemID)
     frame.quantity:SetText(tostring(math.max(1, total)))
-    frame.confirm:Disable(); frame.status:SetText("Aktuelle Konkurrenz mit „Angebote prüfen“ abrufen. Keine automatische Auktion.")
+    frame.confirm:Disable(); frame.status:SetText("Aktuelle Konkurrenz mit Angebote prüfen abrufen. Keine automatische Auktion.")
     self:RenderSellingWorkspace()
 end
 
@@ -997,7 +1074,7 @@ function UI:RefreshSellPreview()
     local frame = self.postDialog
     if not frame.result then return end
     if AHT.Buyer.pending or AHT.Scanner.running or AHT.Scanner.marketDiscovery then frame.status:SetText(AHT:ErrorText("purchase_in_progress")); return end
-    frame.confirm:Disable(); frame.refresh:Disable(); frame.status:SetText("Aktuelle Konkurrenz wird geprüft…")
+    frame.confirm:Disable(); frame.refresh:Disable(); frame.status:SetText("Aktuelle Konkurrenz wird geprüft...")
     AHT.Poster:RefreshPrice(frame.result, function(recommendation, reason)
         frame.refresh:Enable()
         if reason then frame.status:SetText(AHT:ErrorText(reason)); return end
@@ -1041,7 +1118,7 @@ function UI:RenderSellBags()
         local item = frame.bagItems[offset + i]
         row:ClearAllPoints(); row:SetPoint("TOPLEFT", 0, -(offset + i - 1) * 28)
         if item then
-            row:SetText(tostring(item.quantity) .. "× " .. item.name)
+            row:SetText(tostring(item.quantity) .. "x " .. item.name)
             row:SetScript("OnClick", function() self:SelectSellItem({ name = item.name, output = { itemID = item.itemID, quantity = 1 } }) end)
             row:Show()
         else row:Hide() end
@@ -1053,11 +1130,11 @@ function UI:RenderSellDetails()
     if not frame or not frame.details then return end
     local lines = {}
     if frame.detailMode == "posted" then
-        table.insert(lines, "Eigene erstellte Auktionen – keine bestätigten Verkäufe")
+        table.insert(lines, "Eigene erstellte Auktionen - keine bestätigten Verkäufe")
         for i = #AHT.DB.postingHistory, 1, -1 do
             local entry = AHT.DB.postingHistory[i]
             if frame.result and entry.itemID == frame.result.output.itemID and entry.marketPoolKey == AHT.DB.marketPoolKey then
-                table.insert(lines, date("%d.%m. %H:%M", entry.t) .. " | " .. entry.quantity .. "× " .. Money(entry.unitPrice) .. "/Stk")
+                table.insert(lines, date("%d.%m. %H:%M", entry.t) .. " | " .. entry.quantity .. "x " .. Money(entry.unitPrice) .. "/Stk")
             end
         end
     else

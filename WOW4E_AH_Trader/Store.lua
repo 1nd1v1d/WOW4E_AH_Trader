@@ -43,6 +43,7 @@ local DEFAULT_DB = {
         professionFilter = "all",
         opportunityDirection = "all",
         minimumOpportunityPercent = 0,
+        recipeScanSelection = {},
         views = {},
         windows = {},
     },
@@ -111,7 +112,7 @@ function AHT.Store:Load()
     for _, key in ipairs({ "marketPools", "shoppingLists", "recentSearches", "postingHistory" }) do
         if type(WOW4E_AHT_DB[key]) ~= "table" then WOW4E_AHT_DB[key] = {} end
     end
-    for _, pair in ipairs({ { "ui", "views" }, { "ui", "windows" }, { "production", "orders" }, { "production", "purchases" }, { "inventory", "characters" } }) do
+    for _, pair in ipairs({ { "ui", "views" }, { "ui", "windows" }, { "ui", "recipeScanSelection" }, { "production", "orders" }, { "production", "purchases" }, { "inventory", "characters" } }) do
         if type(WOW4E_AHT_DB[pair[1]][pair[2]]) ~= "table" then WOW4E_AHT_DB[pair[1]][pair[2]] = {} end
     end
     CopyDefaults(WOW4E_AHT_DB, DEFAULT_DB)
