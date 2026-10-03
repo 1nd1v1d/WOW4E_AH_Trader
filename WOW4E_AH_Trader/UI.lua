@@ -141,12 +141,42 @@ local function ScanAgeText(timestamp)
     return string.format("vor %d Tg.", math.floor(age / 86400))
 end
 
+function AHT.UI:GetRecipeMaterialScanSummary(result)
+    local oldestScan, scanned, required, seen = nil, 0, 0, {}
+    for _, reagent in ipairs(result and result.reagents or {}) do
+        local itemID = tonumber(reagent.itemID)
+        local key = itemID and tostring(itemID) or string.lower(tostring(reagent.name or ""))
+        if key ~= "" and not seen[key] then
+            seen[key] = true
+            local isVendorItem = itemID and AHT.Commerce and AHT.Commerce.IsVendorItem
+                and AHT.Commerce:IsVendorItem(itemID, reagent.name)
+            if not isVendorItem then
+                required = required + 1
+                local record = itemID and AHT.Store and AHT.Store:GetByItemID(itemID)
+                local timestamp = record and tonumber(record.updatedAt)
+                if timestamp then
+                    scanned = scanned + 1
+                    oldestScan = oldestScan and math.min(oldestScan, timestamp) or timestamp
+                end
+            end
+        end
+    end
+
+    if required == 0 then return nil, "Händler" end
+    if scanned == 0 then return nil, "noch nie" end
+    if scanned < required then
+        return oldestScan, string.format("%s (%d/%d)", ScanAgeText(oldestScan), scanned, required)
+    end
+    return oldestScan, ScanAgeText(oldestScan)
+end
+
 local RECIPE_COLUMNS = {
     { key = "name", label = "Rezept / Ergebnis", width = 230 },
     { key = "costPerOutput", label = "Kosten/Stk", width = 105 },
     { key = "salePrice", label = "Aktuell/Stk", width = 105 },
     { key = "profitPerOutput", label = "Gewinn/Stk", width = 145 },
     { key = "margin", label = "Marge", width = 115 },
+    { key = "materialScanAt", label = "Zutaten-Scan", width = 120 },
 }
 
 local MATERIAL_COLUMNS = {
@@ -327,14 +357,6 @@ function AHT.UI:RefreshControls()
     if self.professionButton then
         if recipes then self.professionButton:Show() else self.professionButton:Hide() end
         self.professionButton:SetText(self.professionFilter or "Alle Berufe")
-    end
-    if self.recipeSelectionButton then
-        if recipes then
-            self.recipeSelectionButton:Show()
-        else
-            self.recipeSelectionButton:Hide()
-            if self.recipeSelectionMenu then self.recipeSelectionMenu:Hide() end
-        end
     end
     if self.opportunityDirectionButton then
         if opportunities then self.opportunityDirectionButton:Show() else self.opportunityDirectionButton:Hide() end
@@ -596,9 +618,6 @@ function AHT.UI:Create()
     self.moreButton = Button(self.frame, nil, "Mehr", 70, 24)
     self.moreButton:SetPoint("LEFT", self.ordersButton, "RIGHT", 8, 0)
 
-    self.recipeSelectionButton = Button(self.frame, nil, "Auswahl", 90, 24)
-    self.recipeSelectionButton:SetPoint("LEFT", self.moreButton, "RIGHT", 8, 0)
-
     self.scanButton = Button(self.frame, nil, "Scannen", 120, 24)
     self.scanButton:SetPoint("TOPRIGHT", -18, -70)
     self.scanButton:SetScript("OnClick", function()
@@ -657,46 +676,6 @@ function AHT.UI:Create()
         end)
         option:Show()
     end
-
-    self.recipeSelectionMenu = CreateFrame("Frame", nil, self.frame, template)
-    self.recipeSelectionMenu:SetSize(250, 28 + 3 * 31)
-    self.recipeSelectionMenu:SetPoint("TOPLEFT", self.recipeSelectionButton, "BOTTOMLEFT", 0, -4)
-    self.recipeSelectionMenu:SetFrameStrata("TOOLTIP")
-    MakeBackdrop(self.recipeSelectionMenu)
-    self.recipeSelectionMenu:Hide()
-    self.recipeSelectionMenuButtons = self.recipeSelectionMenuButtons or {}
-    local recipeSelectionOptions = {
-        { label = "Alle Rezepte markieren", action = function() self:SetVisibleRecipeSelection(true, false, true) end },
-        { label = "Gefilterte Rezepte markieren", action = function() self:SetVisibleRecipeSelection(true) end },
-        { label = "Alle Markierungen aufheben", action = function() self:SetVisibleRecipeSelection(false, true) end },
-    }
-    for index, optionData in ipairs(recipeSelectionOptions) do
-        local option = self.recipeSelectionMenuButtons[index] or Button(self.recipeSelectionMenu, nil, "", 226, 26)
-        local action = optionData.action
-        self.recipeSelectionMenuButtons[index] = option
-        option:ClearAllPoints()
-        option:SetPoint("TOPLEFT", 12, -9 - (index - 1) * 31)
-        option:SetText(optionData.label)
-        option:SetScript("OnClick", function()
-            self.recipeSelectionMenu:Hide()
-            action()
-            self:RefreshStatus()
-        end)
-        option:Show()
-    end
-    self.recipeSelectionButton:SetScript("OnClick", function()
-        if self.recipeSelectionMenu:IsShown() then
-            self.recipeSelectionMenu:Hide()
-        else
-            self.recipeSelectionMenuButtons[1]:SetText(string.format(
-                "Alle Rezepte markieren (%d)", #(AHT.Recipes and AHT.Recipes:GetList() or {})
-            ))
-            self.recipeSelectionMenuButtons[3]:SetText(string.format(
-                "Alle Markierungen aufheben (%d)", self:GetSelectedRecipeCount()
-            ))
-            self.recipeSelectionMenu:Show()
-        end
-    end)
 
     self.transmuteButton = Button(self.frame, nil, "Transmute", 105, 24)
     self.transmuteButton:SetPoint("TOPLEFT", 360, -99)
@@ -1550,9 +1529,6 @@ function AHT.UI:UpdateHeaders()
             marker = self.sortAscending and "  |cff66ff66[A]|r" or "  |cffffaa44[D]|r"
         end
         local label = column.label
-        if index == 1 and (self.viewMode == "recipes" or self.viewMode == "transmute") then
-            label = "Scan | " .. label
-        end
         header.label:SetText(label .. marker)
     end
 end
@@ -1872,6 +1848,8 @@ function AHT.UI:ShowRecipeContext(result, owner)
         local name = reagent.name or AHT:GetItemInfo(reagent.itemID) or tostring(reagent.itemID)
         local current = AHT.Store and AHT.Store:GetPrice(reagent.itemID)
         local snapshot = AHT.Store and AHT.Store:GetMarketSnapshot(reagent.itemID) or nil
+        local vendorItem = AHT.Commerce and AHT.Commerce:IsVendorItem(reagent.itemID, reagent.name)
+        local scanRecord = AHT.Store and AHT.Store:GetByItemID(reagent.itemID)
         local average = snapshot and snapshot.averagePrice or AHT.Store and AHT.Store:RecencyAverage(reagent.itemID)
         local market = snapshot and snapshot.marketValue
         local counts = AHT.Inventory and AHT.Inventory:GetCount(reagent.itemID) or { bags = 0, bank = 0, bankKnown = false }
@@ -1889,6 +1867,11 @@ function AHT.UI:ShowRecipeContext(result, owner)
         GameTooltip:AddDoubleLine(
             "  Seit letztem Scan",
             snapshot and snapshot.priceChangePercent and string.format("%+.1f%%", snapshot.priceChangePercent) or "noch kein Vergleich",
+            0.62, 0.72, 0.95, 0.45, 1, 0.45
+        )
+        GameTooltip:AddDoubleLine(
+            "  AH zuletzt gescannt",
+            vendorItem and "Händlerware (kein AH-Scan)" or ScanAgeText(scanRecord and scanRecord.updatedAt),
             0.62, 0.72, 0.95, 0.45, 1, 0.45
         )
         GameTooltip:AddLine(string.format(
@@ -2237,6 +2220,9 @@ function AHT.UI:Refresh(skipCalculator)
             end
             results = { { kind = "info", text = text } }
         else
+            for _, candidate in ipairs(candidates) do
+                candidate.materialScanAt, candidate.materialScanText = self:GetRecipeMaterialScanSummary(candidate)
+            end
             results = self:SortResults(candidates)
         end
     end

@@ -172,7 +172,26 @@ function UI:SetVisibleRecipeSelection(checked, clearAll, allRecipes)
     end
     AHT.Store:Save()
     if self.frame and self.frame:IsShown() then self:RenderVisibleRows() end
+    self:RefreshRecipeSelectionCheckbox()
     return true
+end
+
+function UI:RefreshRecipeSelectionCheckbox()
+    local checkbox = self.recipeSelectAllCheckbox
+    if not checkbox then return end
+
+    local recipeView = self.viewMode == "recipes" or self.viewMode == "transmute"
+    local selection, hasRecipes, allSelected = RecipeScanSelection(), false, true
+    for _, result in ipairs(self.visibleResults or {}) do
+        if result.recipeID and result.output then
+            hasRecipes = true
+            if selection[tostring(result.recipeID)] ~= true then allSelected = false end
+        end
+    end
+
+    if recipeView and self.tableHeader and self.tableHeader:IsShown() then checkbox:Show() else checkbox:Hide() end
+    checkbox:SetEnabled(hasRecipes)
+    checkbox:SetChecked(hasRecipes and allSelected)
 end
 
 local baseCreateRow = UI.CreateRow
@@ -188,8 +207,10 @@ function UI:CreateRow(index)
         if not result or not result.recipeID then return end
         local selection = RecipeScanSelection()
         local key = tostring(result.recipeID)
-        if button:GetChecked() then selection[key] = true else selection[key] = nil end
+        local checked = button:GetChecked()
+        if checked == true or checked == 1 then selection[key] = true else selection[key] = nil end
         if AHT.Store then AHT.Store:Save() end
+        self:RefreshRecipeSelectionCheckbox()
         self:RefreshStatus()
     end)
     checkbox:SetScript("OnEnter", function(button)
@@ -264,6 +285,8 @@ function UI:RenderVisibleRows()
                     elseif column.key == "updatedAt" then
                         local age = value and math.max(0, AHT:Now() - value)
                         value = age and (age < 3600 and string.format("%d Min.", math.floor(age / 60)) or string.format("%.1f Std.", age / 3600)) or "-"
+                    elseif column.key == "materialScanAt" then
+                        value = result.materialScanText or "noch nie"
                     end
                     row.cells[cellIndex]:SetText(tostring(value == nil and "-" or value))
                     row.cells[cellIndex]:Show()
@@ -458,6 +481,26 @@ function UI:Create()
     baseCreate(self)
     if not self.frame or self.uxCreated then return end
     self.uxCreated = true
+    self.recipeSelectAllCheckbox = CreateFrame("CheckButton", nil, self.tableHeader, "UICheckButtonTemplate")
+    self.recipeSelectAllCheckbox:SetSize(18, 18)
+    self.recipeSelectAllCheckbox:SetPoint("LEFT", self.headers[1], "LEFT", 3, 0)
+    self.recipeSelectAllCheckbox:SetFrameLevel(self.headers[1]:GetFrameLevel() + 2)
+    self.recipeSelectAllCheckbox:SetScript("OnClick", function(button)
+        local checkedState = button:GetChecked()
+        local checked = checkedState == true or checkedState == 1
+        self:SetVisibleRecipeSelection(checked, not checked)
+        self:RefreshRecipeSelectionCheckbox()
+        self:RefreshStatus()
+    end)
+    self.recipeSelectAllCheckbox:SetScript("OnEnter", function(button)
+        if not GameTooltip then return end
+        GameTooltip:SetOwner(button, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Alle sichtbaren Rezepte markieren")
+        GameTooltip:AddLine("Abwählen hebt alle Rezeptmarkierungen auf.", 0.8, 0.8, 0.8, true)
+        GameTooltip:Show()
+    end)
+    self.recipeSelectAllCheckbox:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
+    self:RefreshRecipeSelectionCheckbox()
     self.escapeFrame = CreateFrame("Frame", nil, UIParent)
     self.escapeFrame:EnableKeyboard(true)
     self.escapeFrame:SetPropagateKeyboardInput(true)
@@ -591,6 +634,7 @@ end
 local baseControls = UI.RefreshControls
 function UI:RefreshControls()
     baseControls(self)
+    self:RefreshRecipeSelectionCheckbox()
     if self.opportunityMinimumButton then
         local conditions = (self.numericFilters or {}).columns or {}
         local minimum = conditions.discount and conditions.discount.min or self.minimumOpportunityPercent or 0
