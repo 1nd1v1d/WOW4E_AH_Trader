@@ -286,6 +286,7 @@ function AHT.UI:SaveLayout()
     end
     AHT.DB.ui.width = math.floor(self.frame:GetWidth() or 780)
     AHT.DB.ui.height = math.floor(self.frame:GetHeight() or 600)
+    AHT.DB.ui.detailHeight = math.floor(tonumber(self.detailHeight) or 152)
     AHT.DB.ui.viewMode = self.viewMode
     AHT.DB.ui.sortColumn = self.sortColumn
     AHT.DB.ui.sortAscending = self.sortAscending == true
@@ -295,6 +296,32 @@ function AHT.UI:SaveLayout()
     AHT.DB.ui.minimumOpportunityPercent = self.minimumOpportunityPercent or 0
     self:SaveViewState()
     if AHT.Store then AHT.Store:Save() end
+end
+
+function AHT.UI:UpdateScrollBounds(tableMode)
+    if not self.scroll then return end
+    self.scroll:ClearAllPoints()
+    self.scroll:SetPoint("TOPLEFT", 18, tableMode and -202 or -174)
+    if self.detailPanel then
+        self.scroll:SetPoint("BOTTOMRIGHT", self.detailPanel, "TOPRIGHT", 0, 8)
+    else
+        self.scroll:SetPoint("BOTTOMRIGHT", -34, 140)
+    end
+end
+
+function AHT.UI:SetDetailHeight(height, save)
+    if not self.detailPanel then return end
+    local minimum = 116
+    local frameHeight = self.frame and self.frame:GetHeight() or 600
+    local maximum = math.max(minimum, math.min(360, frameHeight - 280))
+    self.detailHeight = math.floor(math.max(minimum, math.min(maximum, tonumber(height) or 152)))
+    self.detailPanel:SetHeight(self.detailHeight)
+    local tableMode = self.viewMode == "recipes" or self.viewMode == "transmute"
+        or self.viewMode == "materials" or self.viewMode == "watched"
+        or self.viewMode == "orders" or self.viewMode == "opportunities"
+    self:UpdateScrollBounds(tableMode)
+    if self.frame and self.frame:IsShown() then self:RequestRefresh() end
+    if save then self:SaveLayout() end
 end
 
 function AHT.UI:UpdateNavigation()
@@ -547,6 +574,7 @@ function AHT.UI:Create()
     self.sortColumn = ui.sortColumn
     self.sortAscending = ui.sortAscending ~= false
     self.marketFilter = self.marketFilter or ui.marketFilter or "all"
+    self.detailHeight = tonumber(ui.detailHeight) or 152
     local viewState = type(ui.views) == "table" and ui.views[self.viewMode] or {}
     self.hiddenColumns = type(viewState.hiddenColumns) == "table" and viewState.hiddenColumns or {}
     for _, columnKey in ipairs({ "priceChangePercent", "totalQuantity", "opportunityType", "discount", "profit" }) do
@@ -793,9 +821,47 @@ function AHT.UI:Create()
     self.detailPanel = CreateFrame("Frame", nil, self.frame, template)
     self.detailPanel:SetPoint("BOTTOMLEFT", 18, 10)
     self.detailPanel:SetPoint("BOTTOMRIGHT", -34, 10)
-    self.detailPanel:SetHeight(152)
+    self.detailPanel:SetHeight(self.detailHeight)
     self.detailPanel:SetFrameLevel(self.frame:GetFrameLevel() + 2)
     MakeBackdrop(self.detailPanel)
+    self.detailResizeHandle = CreateFrame("Button", nil, self.frame)
+    self.detailResizeHandle:SetPoint("TOPLEFT", self.detailPanel, "TOPLEFT", 0, 4)
+    self.detailResizeHandle:SetPoint("TOPRIGHT", self.detailPanel, "TOPRIGHT", 0, 4)
+    self.detailResizeHandle:SetHeight(8)
+    self.detailResizeHandle:SetFrameLevel(self.detailPanel:GetFrameLevel() + 4)
+    local resizeTexture = self.detailResizeHandle:CreateTexture(nil, "ARTWORK")
+    resizeTexture:SetPoint("LEFT", 2, 0)
+    resizeTexture:SetPoint("RIGHT", -2, 0)
+    resizeTexture:SetHeight(2)
+    resizeTexture:SetColorTexture(0.85, 0.58, 0.18, 0.9)
+    self.detailResizeHandle:SetScript("OnEnter", function()
+        resizeTexture:SetColorTexture(1, 0.84, 0.35, 1)
+        if GameTooltip then
+            GameTooltip:SetOwner(self.detailResizeHandle, "ANCHOR_TOP")
+            GameTooltip:SetText("Detailbereich ziehen", 1, 0.84, 0.35)
+            GameTooltip:AddLine("Nach oben ziehen = mehr Details", 0.8, 0.75, 0.58, true)
+            GameTooltip:Show()
+        end
+    end)
+    self.detailResizeHandle:SetScript("OnLeave", function()
+        resizeTexture:SetColorTexture(0.85, 0.58, 0.18, 0.9)
+        if GameTooltip then GameTooltip:Hide() end
+    end)
+    self.detailResizeHandle:SetScript("OnMouseDown", function()
+        if type(GetCursorPosition) ~= "function" then return end
+        local _, cursorY = GetCursorPosition()
+        self.detailResizeStartHeight = self.detailPanel:GetHeight()
+        self.detailResizeStartCursorY = cursorY / (self.frame:GetEffectiveScale() or 1)
+        self.detailResizeHandle:SetScript("OnUpdate", function()
+            local _, currentY = GetCursorPosition()
+            local scale = self.frame:GetEffectiveScale() or 1
+            self:SetDetailHeight(self.detailResizeStartHeight + (currentY / scale - self.detailResizeStartCursorY), false)
+        end)
+    end)
+    self.detailResizeHandle:SetScript("OnMouseUp", function()
+        self.detailResizeHandle:SetScript("OnUpdate", nil)
+        self:SaveLayout()
+    end)
     self.detailTitle = Label(self.detailPanel, "Auswahl")
     self.detailTitle:SetPoint("TOPLEFT", 10, -7)
     self.detailTitle:SetPoint("TOPRIGHT", self.detailPanel, "TOPRIGHT", -282, -7)
@@ -826,6 +892,7 @@ function AHT.UI:Create()
 
     self.scroll:HookScript("OnVerticalScroll", function() self:RenderVisibleRows() end)
     self.frame:SetScript("OnSizeChanged", function()
+        if self.detailPanel and self.detailHeight then self:SetDetailHeight(self.detailHeight, false) end
         if self.content then self:RequestRefresh() end
         if self.detailRows then self:RefreshDetail() end
     end)
@@ -1500,9 +1567,7 @@ function AHT.UI:UpdateHeaders()
     local tableMode = self.viewMode == "recipes" or self.viewMode == "transmute" or self.viewMode == "materials" or self.viewMode == "watched" or self.viewMode == "orders" or self.viewMode == "opportunities"
     if not self.tableHeader then return end
     self:LayoutTable()
-    self.scroll:ClearAllPoints()
-    self.scroll:SetPoint("TOPLEFT", 18, tableMode and -202 or -174)
-    self.scroll:SetPoint("BOTTOMRIGHT", -34, 140)
+    self:UpdateScrollBounds(tableMode)
     if not tableMode then
         self.tableHeader:Hide()
         return

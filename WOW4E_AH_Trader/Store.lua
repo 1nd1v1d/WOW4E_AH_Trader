@@ -36,6 +36,7 @@ local DEFAULT_DB = {
         y = 0,
         width = 780,
         height = 600,
+        detailHeight = 152,
         viewMode = "recipes",
         sortColumn = "profit",
         sortAscending = false,

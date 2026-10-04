@@ -29,6 +29,59 @@ local function ProfessionKey(professionID, professionName)
     return "unknown"
 end
 
+local function ProfessionNameKey(value)
+    value = TextValue(value)
+    if not value then return nil end
+    return string.lower((value:gsub("%s+", "_")))
+end
+
+-- Forever can return a broader recipe list than the profession currently
+-- shown in the professions window. The recipe-to-tradeskill API is the
+-- authoritative source for the profession a recipe belongs to.
+local function GetRecipeProfession(recipeID, fallbackID, fallbackName)
+    local api = C_TradeSkillUI
+    if not api then return fallbackID, fallbackName end
+
+    if type(api.GetTradeSkillLineForRecipe) == "function" then
+        local ok, tradeSkillID, skillLineName, parentTradeSkillID = pcall(api.GetTradeSkillLineForRecipe, recipeID)
+        if ok and (tradeSkillID or skillLineName or parentTradeSkillID) then
+            return PositiveNumber(parentTradeSkillID) or PositiveNumber(tradeSkillID) or fallbackID,
+                TextValue(skillLineName) or fallbackName
+        end
+    end
+
+    if type(api.GetProfessionInfoByRecipeID) == "function" then
+        local ok, info = pcall(api.GetProfessionInfoByRecipeID, recipeID)
+        if ok and type(info) == "table" then
+            return PositiveNumber(info.parentProfessionID or info.parentTradeSkillID or info.skillLineID or info.professionID) or fallbackID,
+                TextValue(info.professionName, info.parentProfessionName, info.skillLineName, info.name) or fallbackName
+        end
+    end
+
+    return fallbackID, fallbackName
+end
+
+local function RecipeMatchesProfession(recipeID, professionID, professionName)
+    local api = C_TradeSkillUI
+    if not api or type(api.GetTradeSkillLineForRecipe) ~= "function" then return true end
+
+    local ok, tradeSkillID, skillLineName, parentTradeSkillID = pcall(api.GetTradeSkillLineForRecipe, recipeID)
+    if not ok or (not tradeSkillID and not skillLineName and not parentTradeSkillID) then return true end
+
+    local currentID = PositiveNumber(professionID)
+    local recipeIDValue = PositiveNumber(tradeSkillID)
+    local parentIDValue = PositiveNumber(parentTradeSkillID)
+    if currentID and (recipeIDValue == currentID or parentIDValue == currentID) then return true end
+
+    local currentName = ProfessionNameKey(professionName)
+    local recipeName = ProfessionNameKey(skillLineName)
+    if currentName and recipeName then return currentName == recipeName end
+
+    -- If the client did not provide a comparable current-profession value,
+    -- retain the recipe instead of silently deleting valid data.
+    return not currentID and not currentName
+end
+
 local function ReadProfessionInfo()
     local professionID, professionName
     local api = C_TradeSkillUI
@@ -156,28 +209,32 @@ function AHT.Recipes:Load()
     return self.list
 end
 
-local function AddRecipeID(ids, seen, recipeID)
-    if type(recipeID) == "number" and not seen[recipeID] then
+local function AddRecipeID(ids, seen, recipeID, professionID, professionName)
+    if type(recipeID) == "number" and not seen[recipeID]
+            and RecipeMatchesProfession(recipeID, professionID, professionName) then
         seen[recipeID] = true
         table.insert(ids, recipeID)
     end
 end
 
-local function ReadRecipeIDs()
+local function ReadRecipeIDs(professionID, professionName)
     local ids, seen = {}, {}
     local api = C_TradeSkillUI
     if not api then return ids end
 
-    if api.GetAllRecipeIDs then
-        local ok, values = pcall(api.GetAllRecipeIDs)
-        if ok and type(values) == "table" then
-            for _, recipeID in ipairs(values) do AddRecipeID(ids, seen, recipeID) end
-        end
-    end
-    if #ids == 0 and api.GetRecipeIDs then
+    -- GetRecipeIDs is the current-profession list on clients that expose it.
+    -- GetAllRecipeIDs is used as a compatibility fallback and is additionally
+    -- filtered through GetTradeSkillLineForRecipe above for Forever.
+    if api.GetRecipeIDs then
         local ok, values = pcall(api.GetRecipeIDs)
         if ok and type(values) == "table" then
-            for _, recipeID in ipairs(values) do AddRecipeID(ids, seen, recipeID) end
+            for _, recipeID in ipairs(values) do AddRecipeID(ids, seen, recipeID, professionID, professionName) end
+        end
+    end
+    if #ids == 0 and api.GetAllRecipeIDs then
+        local ok, values = pcall(api.GetAllRecipeIDs)
+        if ok and type(values) == "table" then
+            for _, recipeID in ipairs(values) do AddRecipeID(ids, seen, recipeID, professionID, professionName) end
         end
     end
     if #ids == 0 and api.GetCategories and api.GetRecipesForCategory then
@@ -191,7 +248,7 @@ local function ReadRecipeIDs()
                     if okRecipes and type(recipes) == "table" then
                         for _, recipeID in ipairs(recipes) do
                             if type(recipeID) == "table" then recipeID = recipeID.recipeID end
-                            AddRecipeID(ids, seen, recipeID)
+                            AddRecipeID(ids, seen, recipeID, professionID, professionName)
                         end
                     end
                 end
@@ -245,19 +302,20 @@ function AHT.Recipes:Refresh()
     local newList = {}
     local professionID, professionName = ReadProfessionInfo()
     local refreshedIDs = {}
-    for _, recipeID in ipairs(ReadRecipeIDs()) do
+    for _, recipeID in ipairs(ReadRecipeIDs(professionID, professionName)) do
         local ok, info = pcall(C_TradeSkillUI.GetRecipeInfo, recipeID)
         if ok and type(info) == "table" and info.name and info.learned ~= false then
             local output = ReadOutput(recipeID)
             local reagents = ReadReagents(recipeID)
             if output and output.itemID and #reagents > 0 then
+                local recipeProfessionID, recipeProfessionName = GetRecipeProfession(recipeID, professionID, professionName)
                 local recipe = {
                     recipeID = recipeID,
                     name = info.name,
                     output = output,
                     reagents = reagents,
-                    professionID = professionID,
-                    professionName = professionName,
+                    professionID = recipeProfessionID,
+                    professionName = recipeProfessionName,
                     isTransmute = string.find(string.lower(info.name), "transmut") ~= nil,
                 }
                 table.insert(newList, recipe)
@@ -273,6 +331,9 @@ function AHT.Recipes:Refresh()
     for _, recipe in ipairs(AHT.DB and AHT.DB.recipes or {}) do
         local key = type(recipe) == "table" and RecipeKey(recipe.recipeID)
         if key and not refreshedIDs[key] and not seen[key] then
+            local recipeProfessionID, recipeProfessionName = GetRecipeProfession(recipe.recipeID, recipe.professionID, recipe.professionName)
+            recipe.professionID = recipeProfessionID or recipe.professionID or 0
+            recipe.professionName = recipeProfessionName or recipe.professionName or ""
             seen[key] = true
             table.insert(merged, recipe)
         end
