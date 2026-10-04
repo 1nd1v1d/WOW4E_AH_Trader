@@ -146,6 +146,17 @@ function AHT.Scanner:BuildSelectedRecipeTargets()
     return targets
 end
 
+function AHT.Scanner:BuildSelectedWatchTargets()
+    local targets, seen = {}, {}
+    local selection = AHT.DB and AHT.DB.ui and AHT.DB.ui.watchScanSelection or {}
+    for _, item in pairs(AHT.DB and AHT.DB.materials or {}) do
+        if item.itemID and selection[tostring(item.itemID)] then
+            AddTarget(targets, seen, item)
+        end
+    end
+    return targets
+end
+
 function AHT.Scanner:StartAll()
     return self:Start(self:BuildTargets(), "all")
 end

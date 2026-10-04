@@ -11,7 +11,7 @@ function AHT.Mats:Add(value)
     local name = AHT:GetItemInfo(itemID)
     AHT.Store:AddMaterial(itemID, name or tostring(itemID))
     AHT:Print("Material überwacht: " .. (name or tostring(itemID)))
-    if AHT.UI then AHT.UI:SetView("materials") end
+    if AHT.UI then AHT.UI:SetView(AHT.UI.viewMode == "watched" and "watched" or "materials") end
     return true
 end
 
@@ -23,7 +23,7 @@ function AHT.Mats:Remove(value)
     end
     AHT.Store:RemoveMaterial(itemID)
     AHT:Print("Material entfernt: " .. tostring(itemID))
-    if AHT.UI then AHT.UI:SetView("materials") end
+    if AHT.UI then AHT.UI:SetView(AHT.UI.viewMode == "watched" and "watched" or "materials") end
     return true
 end
 
@@ -37,7 +37,7 @@ end
 
 function AHT.Mats:Print()
     if AHT.UI then
-        AHT.UI:SetView("materials")
+        AHT.UI:SetView(AHT.UI.viewMode == "watched" and "watched" or "materials")
         return
     end
     AHT:Print("Keine Materialien. /aht mats add <Item-Link oder Item-ID>")

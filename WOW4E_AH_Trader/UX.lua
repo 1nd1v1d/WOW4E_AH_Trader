@@ -116,7 +116,10 @@ function UI:RestoreViewState(view)
     self.opportunityDirection, self.minimumOpportunityPercent = state.opportunityDirection or "all", state.minimumOpportunityPercent or 0
     self.showTransmutes = state.showTransmutes == true
     self.sortColumn, self.sortAscending = state.sortColumn, state.sortAscending == true
-    self.numericFilters, self.hiddenColumns = state.filters or {}, state.hiddenColumns or { priceChangePercent = true, totalQuantity = true }
+    self.numericFilters, self.hiddenColumns = state.filters or {}, state.hiddenColumns or {}
+    for _, columnKey in ipairs({ "priceChangePercent", "totalQuantity", "opportunityType", "discount", "profit" }) do
+        if self.hiddenColumns[columnKey] == nil then self.hiddenColumns[columnKey] = true end
+    end
     self.selectedKey = state.selectedKey
     if self.searchInput then self.searchInput:SetText(self.searchQuery) end
     if self.scroll then self.scroll:SetVerticalScroll(state.scroll or 0) end
@@ -138,6 +141,13 @@ local function RecipeScanSelection()
     if not ui then return {} end
     if type(ui.recipeScanSelection) ~= "table" then ui.recipeScanSelection = {} end
     return ui.recipeScanSelection
+end
+
+local function WatchScanSelection()
+    local ui = AHT.DB and AHT.DB.ui
+    if not ui then return {} end
+    if type(ui.watchScanSelection) ~= "table" then ui.watchScanSelection = {} end
+    return ui.watchScanSelection
 end
 
 function UI:GetSelectedRecipeCount()
@@ -176,20 +186,47 @@ function UI:SetVisibleRecipeSelection(checked, clearAll, allRecipes)
     return true
 end
 
+function UI:SetVisibleWatchSelection(checked, clearAll)
+    if not AHT.DB or not AHT.Store then return false end
+    local selection = WatchScanSelection()
+    if clearAll then
+        for key in pairs(selection) do selection[key] = nil end
+    elseif self.viewMode ~= "watched" then
+        self:AddMessage("Wechsle zu Beobachten, um Items zu markieren.")
+        return false
+    else
+        for _, result in ipairs(self.visibleResults or {}) do
+            if result.itemID and result.isWatched then
+                local key = tostring(result.itemID)
+                if checked then selection[key] = true else selection[key] = nil end
+            end
+        end
+    end
+    AHT.Store:Save()
+    if self.frame and self.frame:IsShown() then self:RenderVisibleRows() end
+    self:RefreshRecipeSelectionCheckbox()
+    return true
+end
+
 function UI:RefreshRecipeSelectionCheckbox()
     local checkbox = self.recipeSelectAllCheckbox
     if not checkbox then return end
 
     local recipeView = self.viewMode == "recipes" or self.viewMode == "transmute"
-    local selection, hasRecipes, allSelected = RecipeScanSelection(), false, true
+    local watchedView = self.viewMode == "watched"
+    local selection = watchedView and WatchScanSelection() or RecipeScanSelection()
+    local hasRecipes, allSelected = false, true
     for _, result in ipairs(self.visibleResults or {}) do
-        if result.recipeID and result.output then
+        local selectable = (recipeView and result.recipeID and result.output)
+            or (watchedView and result.itemID and result.isWatched)
+        if selectable then
             hasRecipes = true
-            if selection[tostring(result.recipeID)] ~= true then allSelected = false end
+            local key = recipeView and tostring(result.recipeID) or tostring(result.itemID)
+            if selection[key] ~= true then allSelected = false end
         end
     end
 
-    if recipeView and self.tableHeader and self.tableHeader:IsShown() then checkbox:Show() else checkbox:Hide() end
+    if (recipeView or watchedView) and self.tableHeader and self.tableHeader:IsShown() then checkbox:Show() else checkbox:Hide() end
     checkbox:SetEnabled(hasRecipes)
     checkbox:SetChecked(hasRecipes and allSelected)
 end
@@ -204,9 +241,11 @@ function UI:CreateRow(index)
     checkbox:SetFrameLevel(row:GetFrameLevel() + 2)
     checkbox:SetScript("OnClick", function(button)
         local result = row.result
-        if not result or not result.recipeID then return end
-        local selection = RecipeScanSelection()
-        local key = tostring(result.recipeID)
+        local watchedView = self.viewMode == "watched"
+        if not result or (watchedView and not result.itemID) or (not watchedView and not result.recipeID) then return end
+        local selection = watchedView and WatchScanSelection() or RecipeScanSelection()
+        local key = watchedView and tostring(result.itemID) or tostring(result.recipeID)
+        if watchedView and not result.isWatched then return end
         local checked = button:GetChecked()
         if checked == true or checked == 1 then selection[key] = true else selection[key] = nil end
         if AHT.Store then AHT.Store:Save() end
@@ -216,7 +255,7 @@ function UI:CreateRow(index)
     checkbox:SetScript("OnEnter", function(button)
         if not GameTooltip then return end
         GameTooltip:SetOwner(button, "ANCHOR_RIGHT")
-        GameTooltip:SetText("Für Rezeptscan markieren")
+        GameTooltip:SetText(self.viewMode == "watched" and "Für Beobachtungs-Scan markieren" or "Für Rezeptscan markieren")
         GameTooltip:Show()
     end)
     checkbox:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
@@ -255,16 +294,19 @@ function UI:RenderVisibleRows()
                 local item = result.output or result
                 local isRecipe = (self.viewMode == "recipes" or self.viewMode == "transmute")
                     and result.recipeID ~= nil and result.output ~= nil
+                local isWatched = self.viewMode == "watched" and result.itemID and result.isWatched
                 if row.scanCheckbox then
-                    if isRecipe then
-                        row.scanCheckbox:SetChecked(RecipeScanSelection()[tostring(result.recipeID)] == true)
+                    if isRecipe or isWatched then
+                        local selection = isWatched and WatchScanSelection() or RecipeScanSelection()
+                        local key = isWatched and tostring(result.itemID) or tostring(result.recipeID)
+                        row.scanCheckbox:SetChecked(selection[key] == true)
                         row.scanCheckbox:Show()
                     else
                         row.scanCheckbox:SetChecked(false)
                     end
                 end
                 row.icon:ClearAllPoints()
-                row.icon:SetPoint("LEFT", row, "LEFT", isRecipe and 25 or 5, 0)
+                row.icon:SetPoint("LEFT", row, "LEFT", (isRecipe or isWatched) and 25 or 5, 0)
                 if item.itemID then
                     local _, _, quality, _, _, _, _, _, _, icon = AHT:GetItemInfo(item.itemID)
                     if icon then row.icon:SetTexture(icon); row.icon:Show() end
@@ -488,15 +530,19 @@ function UI:Create()
     self.recipeSelectAllCheckbox:SetScript("OnClick", function(button)
         local checkedState = button:GetChecked()
         local checked = checkedState == true or checkedState == 1
-        self:SetVisibleRecipeSelection(checked, not checked)
+        if self.viewMode == "watched" then
+            self:SetVisibleWatchSelection(checked, not checked)
+        else
+            self:SetVisibleRecipeSelection(checked, not checked)
+        end
         self:RefreshRecipeSelectionCheckbox()
         self:RefreshStatus()
     end)
     self.recipeSelectAllCheckbox:SetScript("OnEnter", function(button)
         if not GameTooltip then return end
         GameTooltip:SetOwner(button, "ANCHOR_RIGHT")
-        GameTooltip:SetText("Alle sichtbaren Rezepte markieren")
-        GameTooltip:AddLine("Abwählen hebt alle Rezeptmarkierungen auf.", 0.8, 0.8, 0.8, true)
+        GameTooltip:SetText(self.viewMode == "watched" and "Alle beobachteten Items markieren" or "Alle sichtbaren Rezepte markieren")
+        GameTooltip:AddLine("Abwählen hebt alle Markierungen auf.", 0.8, 0.8, 0.8, true)
         GameTooltip:Show()
     end)
     self.recipeSelectAllCheckbox:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
@@ -543,6 +589,7 @@ function UI:Create()
             { label = "Alle Items", action = function() self.marketFilter = "all" end },
             { label = "Beobachtete Items", action = function() self.marketFilter = "watched" end },
             { label = "Taschen und Bank", action = function() self.marketFilter = "inventory" end },
+            { label = "Chancen", action = function() self.marketFilter = "opportunities"; self.sortColumn = "discount" end },
         } or {
             { label = "Alle Ergebnisse", action = function() self.profitOnly = false end },
             { label = "Nur profitabel", action = function() self.profitOnly = true end },
@@ -578,18 +625,6 @@ function UI:Create()
         { label = "Ruf", action = function() self:SetView("reputation") end },
         { label = "Diagnose", action = function() self:SetView("diagnostics") end },
     }) end)
-    self.scanButton:SetScript("OnClick", function()
-        if AHT.Scanner.running or AHT.Scanner.marketDiscovery or AHT.Scanner.replication then AHT.Scanner:Stop("user"); self:RefreshStatus(); return end
-        self:Dropdown(self.scanButton, {
-            { label = "Bekannte Items (Details)", action = function() AHT.Scanner:Start() end },
-            { label = "AH-Übersicht (max. 100 Seiten)", action = function() AHT.Scanner:StartMarketDiscovery() end },
-            { label = "Auswahl detailliert prüfen", action = function()
-                local result = self.selectedResult
-                if result then AHT.Scanner:Start({ result.output or result }, "selected") end
-            end },
-            { label = "Replikat prüfen (experimentell)", action = function() AHT.Scanner:StartReplication() end },
-        })
-    end)
     self.detailAction:SetWidth(130)
     self.detailAction:ClearAllPoints(); self.detailAction:SetPoint("TOPRIGHT", -135, -28)
     self.detailSearch:ClearAllPoints(); self.detailSearch:SetPoint("BOTTOMRIGHT", -12, 12)
@@ -606,7 +641,14 @@ end
 
 function UI:ShowColumnOptions()
     local options = {}
-    for _, field in ipairs({ { "averagePrice", "Gewichteter Durchschnitt" }, { "priceChangePercent", "Änderung letzter Scan" }, { "totalQuantity", "Angebotsmenge" } }) do
+    for _, field in ipairs({
+        { "averagePrice", "Gewichteter Durchschnitt" },
+        { "priceChangePercent", "Änderung letzter Scan" },
+        { "totalQuantity", "Angebotsmenge" },
+        { "opportunityType", "Chance" },
+        { "discount", "Vorteil" },
+        { "profit", "Netto" },
+    }) do
         table.insert(options, { label = ((self.hiddenColumns or {})[field[1]] and "[ ] " or "[x] ") .. field[2], action = function()
             self.hiddenColumns = self.hiddenColumns or {}; self.hiddenColumns[field[1]] = not self.hiddenColumns[field[1]]
         end })
@@ -616,7 +658,7 @@ end
 
 function UI:UpgradeTabs()
     local definitions = { { "recipeButton", "recipes", "Herstellen", 112 }, { "matsButton", "materials", "Markt", 88 },
-        { "opportunityButton", "opportunities", "Chancen", 88 }, { "ordersButton", "orders", "Aufträge", 92 } }
+        { "watchButton", "watched", "Beobachten", 112 } }
     for _, definition in ipairs(definitions) do
         local button = self[definition[1]]
         button:SetText(definition[3])
@@ -640,7 +682,11 @@ function UI:RefreshControls()
         local minimum = conditions.discount and conditions.discount.min or self.minimumOpportunityPercent or 0
         self.opportunityMinimumButton:SetText(string.format("Vorteil >= %.0f%%", minimum))
     end
-    if self.filterButton then self.filterButton:SetText(self.viewMode == "materials" and (({ all = "Alle", watched = "Beobachtet", inventory = "Bestand" })[self.marketFilter] or "Alle") or (self.profitOnly and "Profitabel" or "Alle")) end
+    if self.filterButton and self.viewMode == "materials" then
+        self.filterButton:SetText(({
+            all = "Alle", watched = "Beobachtet", inventory = "Bestand", opportunities = "Chancen",
+        })[self.marketFilter] or "Alle")
+    end
     if self.clearFilters then
         local count = 0
         for key, value in pairs(self.numericFilters or {}) do

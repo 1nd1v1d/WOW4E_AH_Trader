@@ -44,6 +44,7 @@ local DEFAULT_DB = {
         opportunityDirection = "all",
         minimumOpportunityPercent = 0,
         recipeScanSelection = {},
+        watchScanSelection = {},
         views = {},
         windows = {},
     },
@@ -112,7 +113,7 @@ function AHT.Store:Load()
     for _, key in ipairs({ "marketPools", "shoppingLists", "recentSearches", "postingHistory" }) do
         if type(WOW4E_AHT_DB[key]) ~= "table" then WOW4E_AHT_DB[key] = {} end
     end
-    for _, pair in ipairs({ { "ui", "views" }, { "ui", "windows" }, { "ui", "recipeScanSelection" }, { "production", "orders" }, { "production", "purchases" }, { "inventory", "characters" } }) do
+    for _, pair in ipairs({ { "ui", "views" }, { "ui", "windows" }, { "ui", "recipeScanSelection" }, { "ui", "watchScanSelection" }, { "production", "orders" }, { "production", "purchases" }, { "inventory", "characters" } }) do
         if type(WOW4E_AHT_DB[pair[1]][pair[2]]) ~= "table" then WOW4E_AHT_DB[pair[1]][pair[2]] = {} end
     end
     CopyDefaults(WOW4E_AHT_DB, DEFAULT_DB)
@@ -135,7 +136,7 @@ function AHT.Store:Load()
         previousScan.finishedAt = AHT:Now() or time()
         previousScan.reason = "client_restarted_during_scan"
     end
-    local filters = { all = true, watched = true, inventory = true }
+    local filters = { all = true, watched = true, inventory = true, opportunities = true }
     if not filters[WOW4E_AHT_DB.ui.marketFilter] then WOW4E_AHT_DB.ui.marketFilter = "all" end
     if type(WOW4E_AHT_DB.ui.professionFilter) ~= "string" then WOW4E_AHT_DB.ui.professionFilter = "all" end
     if WOW4E_AHT_DB.ui.opportunityDirection ~= "buy" and WOW4E_AHT_DB.ui.opportunityDirection ~= "sell" then
@@ -589,6 +590,9 @@ function AHT.Store:RemoveMaterial(itemID)
     if not self:EnsureLoaded() then return false end
     AHT.DB.materials = AHT.DB.materials or {}
     AHT.DB.materials[tostring(itemID)] = nil
+    if AHT.DB.ui and AHT.DB.ui.watchScanSelection then
+        AHT.DB.ui.watchScanSelection[tostring(itemID)] = nil
+    end
     self:Save()
     return true
 end

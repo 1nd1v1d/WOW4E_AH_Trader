@@ -39,7 +39,7 @@ function AHT.UI:OnItemInfoLoaded(itemID, success)
     if not itemID or not requestedItemNames[itemID] then return end
     requestedItemNames[itemID] = nil
     if success == false then return end
-    if self.frame and self.frame:IsShown() and self.viewMode == "materials" then
+    if self.frame and self.frame:IsShown() and (self.viewMode == "materials" or self.viewMode == "watched") then
         self:RequestRefresh()
     end
 end
@@ -188,6 +188,9 @@ local MATERIAL_COLUMNS = {
     { key = "averagePrice", label = "Ø gewichtet", width = 105, optional = true },
     { key = "priceChangePercent", label = "Änderung", width = 90, optional = true },
     { key = "totalQuantity", label = "Angebotsmenge", width = 100, optional = true },
+    { key = "opportunityType", label = "Chance", width = 120, optional = true },
+    { key = "discount", label = "Vorteil", width = 90, optional = true },
+    { key = "profit", label = "Netto", width = 100, optional = true },
 }
 
 local OPPORTUNITY_COLUMNS = {
@@ -208,7 +211,7 @@ local ORDER_COLUMNS = {
 
 local TABLE_WIDTH = 700
 local ROW_HEIGHT = 23
-local MAX_COLUMNS = 10
+local MAX_COLUMNS = 12
 local DETAIL_ROW_HEIGHT = 18
 local DETAIL_PAIR_WIDTHS = { 0.25, 0.25, 0.25, 0.25 }
 local DETAIL_INGREDIENT_WIDTHS = { 0.42, 0.14, 0.19, 0.25 }
@@ -253,13 +256,9 @@ local VIEW_INFO = {
         title = "Markt",
         help = "Alle erfassten AH-Items. Aktuell = letzter Scan; Marktwert = robuste historische Orientierung.",
     },
-    orders = {
-        title = "Aufträge",
-        help = "Reservierte Materialien und bereits gekaufte Zutaten je Herstellungsauftrag.",
-    },
-    opportunities = {
-        title = "Chancen",
-        help = "AH-Markt-Scan erfasst alle Browse-Items; Chancen entstehen aus aktuellem Preis und robuster Historie.",
+    watched = {
+        title = "Beobachten",
+        help = "Eigene Itemliste. Markiere Items und starte einen gezielten AH-Scan.",
     },
     reputation = {
         title = "Ruf",
@@ -302,8 +301,7 @@ function AHT.UI:UpdateNavigation()
     local primary = {
         recipes = self.recipeButton,
         materials = self.matsButton,
-        opportunities = self.opportunityButton,
-        orders = self.ordersButton,
+        watched = self.watchButton,
     }
     for viewMode, button in pairs(primary) do
         if button and button.GetFontString then
@@ -328,13 +326,12 @@ end
 
 function AHT.UI:RefreshControls()
     local materials = self.viewMode == "materials"
+    local watched = self.viewMode == "watched"
     local recipes = self.viewMode == "recipes" or self.viewMode == "transmute"
-    local opportunities = self.viewMode == "opportunities"
     local searchable = self.viewMode == "recipes"
         or self.viewMode == "transmute"
         or self.viewMode == "materials"
-        or self.viewMode == "opportunities"
-        or self.viewMode == "orders"
+        or watched
     if self.searchLabel then
         if searchable then self.searchLabel:Show() else self.searchLabel:Hide() end
     end
@@ -342,12 +339,13 @@ function AHT.UI:RefreshControls()
         if searchable then self.searchInput:Show() else self.searchInput:Hide() end
     end
     if self.filterButton then
-        if searchable and self.viewMode ~= "orders" then self.filterButton:Show() else self.filterButton:Hide() end
+        if materials then self.filterButton:Show() else self.filterButton:Hide() end
         if materials then
-            local labels = { all = "Alle Items", watched = "Beobachtet", inventory = "Bestand aller Figuren" }
+            local labels = {
+                all = "Alle Items", watched = "Beobachtet", inventory = "Bestand aller Figuren",
+                opportunities = "Chancen",
+            }
             self.filterButton:SetText(labels[self.marketFilter] or labels.all)
-        else
-            self.filterButton:SetText(self.profitOnly and "Alle" or "Nur profitabel")
         end
     end
     if self.transmuteButton then
@@ -359,22 +357,33 @@ function AHT.UI:RefreshControls()
         self.professionButton:SetText(self.professionFilter or "Alle Berufe")
     end
     if self.opportunityDirectionButton then
-        if opportunities then self.opportunityDirectionButton:Show() else self.opportunityDirectionButton:Hide() end
+        if materials and self.marketFilter == "opportunities" then self.opportunityDirectionButton:Show() else self.opportunityDirectionButton:Hide() end
         local labels = { all = "Alle Chancen", buy = "Nur Kauf", sell = "Nur Verkauf" }
         self.opportunityDirectionButton:SetText(labels[self.opportunityDirection] or labels.all)
     end
     if self.opportunityMinimumButton then
-        if opportunities then self.opportunityMinimumButton:Show() else self.opportunityMinimumButton:Hide() end
+        if materials and self.marketFilter == "opportunities" then self.opportunityMinimumButton:Show() else self.opportunityMinimumButton:Hide() end
         self.opportunityMinimumButton:SetText(string.format("Vorteil >= %d%%", self.minimumOpportunityPercent or 0))
     end
+    local canAddItems = watched or (materials and self.marketFilter ~= "opportunities")
     if self.materialLabel then
-        if materials then self.materialLabel:Show() else self.materialLabel:Hide() end
+        self.materialLabel:SetText(watched and "Item:" or "Material:")
+        if canAddItems then self.materialLabel:Show() else self.materialLabel:Hide() end
     end
     if self.materialInput then
-        if materials then self.materialInput:Show() else self.materialInput:Hide() end
+        if canAddItems then self.materialInput:Show() else self.materialInput:Hide() end
     end
     if self.materialAdd then
-        if materials then self.materialAdd:Show() else self.materialAdd:Hide() end
+        if canAddItems then self.materialAdd:Show() else self.materialAdd:Hide() end
+    end
+    if self.scanButton then
+        local scanView = recipes or materials or watched
+        if scanView then
+            self.scanButton:Show()
+            self.scanButton:SetText(recipes and "Rezepte scannen" or materials and "AH scannen" or "Items scannen")
+        else
+            self.scanButton:Hide()
+        end
     end
 end
 
@@ -493,6 +502,7 @@ function AHT.UI:HideDatabaseRecovery()
 end
 
 function AHT.UI:SetView(viewMode)
+    local requestedView = viewMode
     if viewMode == "transmute" then
         self.showTransmutes = true
         viewMode = "recipes"
@@ -505,11 +515,16 @@ function AHT.UI:SetView(viewMode)
         return false
     end
     self.viewMode = VIEW_INFO[viewMode] and viewMode or "recipes"
+    if requestedView == "opportunities" then
+        self.viewMode = "materials"
+        self.marketFilter = "opportunities"
+    elseif requestedView == "orders" then
+        self.viewMode = "materials"
+    end
     self.lastMessage = ""
     self.selectedResult = nil
     if not self.frame then self:Create() end
     if self.moreMenu then self.moreMenu:Hide() end
-    if self.scanMenu then self.scanMenu:Hide() end
     self:RefreshControls()
     self:UpdateNavigation()
     self:RefreshDetail()
@@ -525,9 +540,18 @@ function AHT.UI:Create()
     self.frame = CreateFrame("Frame", "WOW4E_AH_Trader_MainFrame", UIParent, template)
     local ui = AHT.DB and AHT.DB.ui or {}
     self.viewMode = VIEW_INFO[ui.viewMode] and ui.viewMode or self.viewMode
+    if ui.viewMode == "opportunities" or ui.viewMode == "orders" then
+        self.viewMode = "materials"
+        self.marketFilter = "opportunities"
+    end
     self.sortColumn = ui.sortColumn
     self.sortAscending = ui.sortAscending ~= false
-    self.marketFilter = ui.marketFilter or self.marketFilter or "all"
+    self.marketFilter = self.marketFilter or ui.marketFilter or "all"
+    local viewState = type(ui.views) == "table" and ui.views[self.viewMode] or {}
+    self.hiddenColumns = type(viewState.hiddenColumns) == "table" and viewState.hiddenColumns or {}
+    for _, columnKey in ipairs({ "priceChangePercent", "totalQuantity", "opportunityType", "discount", "profit" }) do
+        if self.hiddenColumns[columnKey] == nil then self.hiddenColumns[columnKey] = true end
+    end
     self.professionFilter = ui.professionFilter and ui.professionFilter ~= "all" and ui.professionFilter or nil
     self.opportunityDirection = ui.opportunityDirection or "all"
     self.minimumOpportunityPercent = tonumber(ui.minimumOpportunityPercent) or 0
@@ -607,75 +631,37 @@ function AHT.UI:Create()
     self.matsButton:SetPoint("LEFT", self.recipeButton, "RIGHT", 8, 0)
     self.matsButton:SetScript("OnClick", function() self:SetView("materials") end)
 
-    self.opportunityButton = Button(self.frame, nil, "Chancen", 88, 24)
-    self.opportunityButton:SetPoint("LEFT", self.matsButton, "RIGHT", 8, 0)
-    self.opportunityButton:SetScript("OnClick", function() self:SetView("opportunities") end)
-
-    self.ordersButton = Button(self.frame, nil, "Aufträge", 92, 24)
-    self.ordersButton:SetPoint("LEFT", self.opportunityButton, "RIGHT", 8, 0)
-    self.ordersButton:SetScript("OnClick", function() self:SetView("orders") end)
+    self.watchButton = Button(self.frame, nil, "Beobachten", 112, 24)
+    self.watchButton:SetPoint("LEFT", self.matsButton, "RIGHT", 8, 0)
+    self.watchButton:SetScript("OnClick", function() self:SetView("watched") end)
 
     self.moreButton = Button(self.frame, nil, "Mehr", 70, 24)
-    self.moreButton:SetPoint("LEFT", self.ordersButton, "RIGHT", 8, 0)
+    self.moreButton:SetPoint("LEFT", self.watchButton, "RIGHT", 8, 0)
 
     self.scanButton = Button(self.frame, nil, "Scannen", 120, 24)
     self.scanButton:SetPoint("TOPRIGHT", -18, -70)
     self.scanButton:SetScript("OnClick", function()
-        if AHT.Scanner.running or AHT.Scanner.marketDiscovery then
+        if AHT.Scanner.running or AHT.Scanner.marketDiscovery or AHT.Scanner.replication then
             AHT.Scanner:Stop("user")
-            if self.scanMenu then self.scanMenu:Hide() end
-        else
-            if self.scanMenu:IsShown() then
-                self.scanMenu:Hide()
+        elseif self.viewMode == "recipes" or self.viewMode == "transmute" then
+            local targets = AHT.Scanner:BuildSelectedRecipeTargets()
+            if #targets == 0 then
+                self:AddMessage("Keine Rezepte markiert. Markiere zuerst Rezepte in der Tabelle.")
             else
-                self.scanMenuButtons[4]:SetText(string.format("Rezeptmaterialien (%d)", #AHT.Scanner:BuildRecipeMaterialTargets()))
-                self.scanMenuButtons[5]:SetText(string.format("Markierte Rezepte (%d)", self:GetSelectedRecipeCount()))
-                self.scanMenu:Show()
+                AHT.Scanner:Start(targets, "selected_recipes")
+            end
+        elseif self.viewMode == "materials" then
+            AHT.Scanner:StartMarketDiscovery()
+        elseif self.viewMode == "watched" then
+            local targets = AHT.Scanner:BuildSelectedWatchTargets()
+            if #targets == 0 then
+                self:AddMessage("Keine Items markiert. Markiere zuerst Items in Beobachten.")
+            else
+                AHT.Scanner:Start(targets, "watched")
             end
         end
         self:RefreshStatus()
     end)
-
-    self.scanMenu = CreateFrame("Frame", nil, self.frame, template)
-    self.scanMenu:SetPoint("TOPRIGHT", self.scanButton, "BOTTOMRIGHT", 0, -4)
-    self.scanMenu:SetFrameStrata("TOOLTIP")
-    MakeBackdrop(self.scanMenu)
-    self.scanMenu:Hide()
-    self.scanOptions = {
-        { label = "Bekannte Items", action = function() AHT.Scanner:Start(nil, "known") end },
-        { label = "Ganzer AH-Markt", action = function() AHT.Scanner:StartMarketDiscovery() end },
-        { label = "Ausgewähltes Item", action = function()
-            local result = self.selectedResult
-            local item = result and (result.output or result)
-            if item and item.itemID then
-                AHT.Scanner:Start({ { itemID = item.itemID, itemKey = item.itemKey, name = item.name, kind = item.kind } }, "selected")
-            else
-                self:AddMessage("Wähle zuerst ein Item in der Liste aus.")
-            end
-        end },
-        { label = "Rezeptmaterialien scannen", action = function()
-            AHT.Scanner:Start(AHT.Scanner:BuildRecipeMaterialTargets(), "recipe_materials")
-        end },
-        { label = "Markierte Rezepte scannen", action = function()
-            AHT.Scanner:Start(AHT.Scanner:BuildSelectedRecipeTargets(), "selected_recipes")
-        end },
-    }
-    self.scanMenu:SetSize(250, 28 + #self.scanOptions * 31)
-    self.scanMenuButtons = self.scanMenuButtons or {}
-    for index, optionData in ipairs(self.scanOptions) do
-        local option = self.scanMenuButtons[index] or Button(self.scanMenu, nil, "", 226, 26)
-        local action = optionData.action
-        self.scanMenuButtons[index] = option
-        option:ClearAllPoints()
-        option:SetPoint("TOPLEFT", 12, -9 - (index - 1) * 31)
-        option:SetText(optionData.label)
-        option:SetScript("OnClick", function()
-            self.scanMenu:Hide()
-            action()
-            self:RefreshStatus()
-        end)
-        option:Show()
-    end
 
     self.transmuteButton = Button(self.frame, nil, "Transmute", 105, 24)
     self.transmuteButton:SetPoint("TOPLEFT", 360, -99)
@@ -1429,12 +1415,16 @@ function AHT.UI:CreateRows()
 end
 
 function AHT.UI:GetActiveColumns()
-    local source = self.viewMode == "materials" and MATERIAL_COLUMNS
+    local source = (self.viewMode == "materials" or self.viewMode == "watched") and MATERIAL_COLUMNS
         or self.viewMode == "opportunities" and OPPORTUNITY_COLUMNS
         or self.viewMode == "orders" and ORDER_COLUMNS or RECIPE_COLUMNS
     local columns = {}
     for _, column in ipairs(source) do
-        if not column.optional or not (self.hiddenColumns or {})[column.key] then table.insert(columns, column) end
+        local chanceColumn = column.key == "opportunityType" or column.key == "discount" or column.key == "profit"
+        local showChanceColumns = self.viewMode == "materials" and self.marketFilter == "opportunities"
+        if not column.optional or not (self.hiddenColumns or {})[column.key] or (chanceColumn and showChanceColumns) then
+            table.insert(columns, column)
+        end
     end
     return columns
 end
@@ -1445,7 +1435,7 @@ function AHT.UI:EnsureSortColumn()
         if column.key == self.sortColumn then return end
     end
     if self.viewMode == "materials" then
-        self.sortColumn = "currentPrice"
+        self.sortColumn = self.marketFilter == "opportunities" and "discount" or "currentPrice"
         self.sortAscending = false
     elseif self.viewMode == "opportunities" then
         self.sortColumn = "profit"
@@ -1461,7 +1451,7 @@ end
 
 function AHT.UI:LayoutTable()
     local columns = self:GetActiveColumns()
-    local recipeRows = self.viewMode == "recipes" or self.viewMode == "transmute"
+    local recipeRows = self.viewMode == "recipes" or self.viewMode == "transmute" or self.viewMode == "watched"
     local width = math.max(700, (self.frame:GetWidth() or 780) - 80)
     local total = 0
     for _, column in ipairs(columns) do total = total + column.width end
@@ -1507,7 +1497,7 @@ function AHT.UI:SetSort(column)
 end
 
 function AHT.UI:UpdateHeaders()
-    local tableMode = self.viewMode == "recipes" or self.viewMode == "transmute" or self.viewMode == "materials" or self.viewMode == "orders" or self.viewMode == "opportunities"
+    local tableMode = self.viewMode == "recipes" or self.viewMode == "transmute" or self.viewMode == "materials" or self.viewMode == "watched" or self.viewMode == "orders" or self.viewMode == "opportunities"
     if not self.tableHeader then return end
     self:LayoutTable()
     self.scroll:ClearAllPoints()
@@ -1573,9 +1563,16 @@ function AHT.UI:MatchesFilter(result)
         }, " "))
         if not string.find(haystack, query, 1, true) then return false end
     end
-    if self.viewMode == "materials" then
+    if self.viewMode == "materials" or self.viewMode == "watched" then
         if self.marketFilter == "watched" and not result.isWatched then return false end
         if self.marketFilter == "inventory" and not result.inInventory then return false end
+        if self.marketFilter == "opportunities" then
+            if not result.opportunityType then return false end
+            if self.opportunityDirection and self.opportunityDirection ~= "all"
+                    and result.side ~= self.opportunityDirection then return false end
+            local minimum = tonumber(self.minimumOpportunityPercent) or 0
+            if minimum > 0 and (tonumber(result.discount) or 0) < minimum then return false end
+        end
     end
     if (self.viewMode == "recipes" or self.viewMode == "transmute") and self.professionFilter
             and result.professionName ~= self.professionFilter then return false end
@@ -2001,15 +1998,43 @@ function AHT.UI:RefreshStatus()
     local help = self.lastMessage ~= "" and self.lastMessage or view.help
     if self.viewHelp then self.viewHelp:SetText(help) end
     local scanning = AHT.Scanner and (AHT.Scanner.running or AHT.Scanner.marketDiscovery or AHT.Scanner.replication)
-    self.scanButton:SetText(scanning and "Abbrechen" or "Scannen")
+    if self.scanButton then
+        local label
+        if self.viewMode == "recipes" or self.viewMode == "transmute" then
+            label = "Rezepte scannen"
+        elseif self.viewMode == "materials" then
+            label = "AH scannen"
+        elseif self.viewMode == "watched" then
+            label = "Items scannen"
+        else
+            label = "Scannen"
+        end
+        self.scanButton:SetText(scanning and "Abbrechen" or label)
+    end
 end
 
-function AHT.UI:BuildMaterialRows()
+function AHT.UI:BuildMaterialRows(watchedOnly)
     local rows = {}
     local materials = AHT.DB and AHT.DB.materials or {}
     local market = AHT.DB and AHT.DB.market or {}
     local inventorySet = AHT.Inventory and AHT.Inventory:GetAvailableItemSet() or {}
     local seen = {}
+    local opportunityIndex = {}
+    if not watchedOnly and self.marketFilter == "opportunities" and AHT.Opportunities then
+        if AHT.Calculator then AHT.Calculator:Refresh() end
+        for _, opportunity in ipairs(AHT.Opportunities:Build() or {}) do
+            local itemID = tonumber(opportunity.itemID)
+            if itemID then
+                local bucket = opportunityIndex[itemID] or {}
+                local side = opportunity.side or "all"
+                local current = bucket[side]
+                if not current or (tonumber(opportunity.profit) or 0) > (tonumber(current.profit) or 0) then
+                    bucket[side] = opportunity
+                end
+                opportunityIndex[itemID] = bucket
+            end
+        end
+    end
 
     local function AddRow(key, record, material)
         local itemID = tonumber((record and record.itemID) or (material and material.itemID))
@@ -2021,6 +2046,20 @@ function AHT.UI:BuildMaterialRows()
         local updatedAt = snapshot and snapshot.updatedAt or record and tonumber(record.updatedAt) or nil
         local name = UsableItemName(material and material.name) or UsableItemName(record and record.name)
         if not name then name = UsableItemName(AHT:GetItemInfo(itemID)) end
+        local opportunity
+        local opportunityBucket = opportunityIndex[itemID]
+        if opportunityBucket then
+            local minimum = tonumber(self.minimumOpportunityPercent) or 0
+            local candidates = self.opportunityDirection ~= "all"
+                and { opportunityBucket[self.opportunityDirection] }
+                or { opportunityBucket.buy, opportunityBucket.sell, opportunityBucket.all }
+            for _, candidate in ipairs(candidates) do
+                if candidate and (tonumber(candidate.discount) or 0) >= minimum
+                        and (not opportunity or (tonumber(candidate.profit) or 0) > (tonumber(opportunity.profit) or 0)) then
+                    opportunity = candidate
+                end
+            end
+        end
         table.insert(rows, {
             kind = "material",
             name = name or string.format("Item #%d", itemID),
@@ -2045,13 +2084,21 @@ function AHT.UI:BuildMaterialRows()
             scanSamples = snapshot and snapshot.scanSamples or 0,
             updatedAt = updatedAt,
             updatedText = updatedAt and date("%d.%m.%y", updatedAt) or "-",
+            opportunityType = opportunity and ((opportunity.side == "buy" and "Kauf: " or opportunity.side == "sell" and "Verkauf: " or "") .. tostring(opportunity.opportunityType or "Chance")) or nil,
+            side = opportunity and opportunity.side or nil,
+            discount = opportunity and opportunity.discount or nil,
+            profit = opportunity and opportunity.profit or nil,
+            roi = opportunity and opportunity.roi or nil,
+            confidence = opportunity and opportunity.confidence or nil,
         })
     end
 
-    for key, record in pairs(market) do
-        if type(record) == "table" then
-            local material = materials[tostring(record.itemID or "")]
-            AddRow(key, record, material)
+    if not watchedOnly then
+        for key, record in pairs(market) do
+            if type(record) == "table" then
+                local material = materials[tostring(record.itemID or "")]
+                AddRow(key, record, material)
+            end
         end
     end
     for _, material in pairs(materials) do
@@ -2064,7 +2111,8 @@ function AHT.UI:BuildMaterialRows()
         return string.lower(tostring(a.name)) < string.lower(tostring(b.name))
     end)
     if #rows == 0 then
-        local message = self.marketFilter == "watched" and "Keine beobachteten Items. Füge ein Item über Material hinzu."
+        local message = watchedOnly and "Keine beobachteten Items. Füge oben ein Item hinzu."
+            or self.marketFilter == "watched" and "Keine beobachteten Items. Füge ein Item über Material hinzu."
             or self.marketFilter == "inventory" and "Keine Items in Taschen/Bank gefunden. Öffne die Bank, damit der Bestand aktualisiert wird."
             or "Noch keine Items erfasst. Starte 'Ganzer AH-Markt' oder einen Scan bekannter Items."
         table.insert(rows, { kind = "info", text = message })
@@ -2196,6 +2244,8 @@ function AHT.UI:Refresh(skipCalculator)
     local results
     if mode == "materials" then
         results = self:SortResults(self:BuildMaterialRows())
+    elseif mode == "watched" then
+        results = self:SortResults(self:BuildMaterialRows(true))
     elseif mode == "opportunities" then
         results = self:SortResults(self:BuildOpportunityRows())
     elseif mode == "orders" then
@@ -2260,7 +2310,6 @@ function AHT.UI:Show()
     if not self.frame then self:Create() end
     self:RestoreFrameStrata()
     AHT:Refresh()
-    if self.scanMenu then self.scanMenu:Hide() end
     self.frame:Show()
     self:HideDatabaseRecovery()
     return true
