@@ -482,6 +482,12 @@ function UI:ShowHistory(result, days)
     local frame = self:Window("history", "Preisverlauf - " .. tostring(result.name or item.name or item.itemID), 700, 420)
     local points = AHT.Commerce:PriceHistory(item.itemID, item.itemKey, days)
     local snapshot = AHT.Store:GetMarketSnapshot(item.itemID, item.itemKey)
+    if not frame.historyTooltipHooked then
+        frame.historyTooltipHooked = true
+        frame:HookScript("OnHide", function()
+            if GameTooltip then GameTooltip:Hide() end
+        end)
+    end
     frame.summary = frame.summary or Text(frame, "", 650)
     frame.summary:SetPoint("TOPLEFT", 16, -53)
     frame.summary:SetText(string.format("Aktuell %s | Ø %s | %d Beobachtungstage | Quelle: %s\nÄnderung zum letzten Scan: %s | Verteilung: %s",
@@ -492,7 +498,9 @@ function UI:ShowHistory(result, days)
     frame.graph:SetPoint("TOPLEFT", 60, -117)
     frame.graph:SetSize(580, 220)
     frame.bars = frame.bars or {}
+    frame.barButtons = frame.barButtons or {}
     for _, bar in ipairs(frame.bars) do bar:Hide() end
+    for _, button in ipairs(frame.barButtons) do button:Hide() end
     local minimum, maximum = math.huge, 0
     for _, point in ipairs(points) do minimum = math.min(minimum, point.p); maximum = math.max(maximum, point.p) end
     frame.axis = frame.axis or Text(frame, "", 650)
@@ -502,11 +510,42 @@ function UI:ShowHistory(result, days)
     for i, point in ipairs(points) do
         local bar = frame.bars[i] or frame.graph:CreateTexture(nil, "ARTWORK")
         frame.bars[i] = bar
+        local button = frame.barButtons[i]
+        if not button then
+            button = CreateFrame("Button", nil, frame.graph)
+            button:EnableMouse(true)
+            button.highlight = button:CreateTexture(nil, "HIGHLIGHT")
+            button.highlight:SetAllPoints(button)
+            button.highlight:SetColorTexture(1, 0.84, 0.35, 0.16)
+            button:SetScript("OnEnter", function(activeButton)
+                local hoveredPoint = activeButton.historyPoint
+                if not hoveredPoint or not GameTooltip then return end
+                GameTooltip:SetOwner(activeButton, "ANCHOR_TOP")
+                GameTooltip:SetText(date("%d.%m.%Y", hoveredPoint.t), 1, 0.84, 0.35)
+                GameTooltip:AddLine("Tagespreis: " .. Money(hoveredPoint.p), 1, 1, 1)
+                if hoveredPoint.scans then
+                    GameTooltip:AddLine("Scans an diesem Tag: " .. tostring(hoveredPoint.scans), 0.78, 0.74, 0.64)
+                end
+                GameTooltip:Show()
+            end)
+            button:SetScript("OnLeave", function()
+                if GameTooltip then GameTooltip:Hide() end
+            end)
+            frame.barButtons[i] = button
+        end
         bar:ClearAllPoints()
-        bar:SetPoint("BOTTOMLEFT", math.max(0, (point.t - cutoff) / (days * 86400)) * 570, 0)
-        bar:SetSize(math.max(3, 500 / days), 4 + (point.p - minimum) / math.max(1, maximum - minimum) * 200)
+        local x = math.max(0, (point.t - cutoff) / (days * 86400)) * 570
+        local barWidth = math.max(3, 500 / days)
+        local barHeight = 4 + (point.p - minimum) / math.max(1, maximum - minimum) * 200
+        bar:SetPoint("BOTTOMLEFT", x, 0)
+        bar:SetSize(barWidth, barHeight)
         bar:SetColorTexture(0.85, 0.65, 0.20, 1)
         bar:Show()
+        button:ClearAllPoints()
+        button:SetPoint("BOTTOMLEFT", x, 0)
+        button:SetSize(barWidth, barHeight)
+        button.historyPoint = point
+        button:Show()
     end
     frame.from = frame.from or Text(frame, "", 150)
     frame.from:SetPoint("BOTTOMLEFT", 60, 62); frame.from:SetText(date("%d.%m.", cutoff))

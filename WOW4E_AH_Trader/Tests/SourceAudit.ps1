@@ -64,6 +64,8 @@ $requiredSnippets = @(
     "function AHT.UI:SetDetailHeight",
     "detailHeight = 152",
     "Detailbereich ziehen",
+    "frame.barButtons = frame.barButtons or {}",
+    "Scans an diesem Tag:",
     "CalculatePriceStats",
     "dailyHistory",
     "AHT.Opportunities:Build",
