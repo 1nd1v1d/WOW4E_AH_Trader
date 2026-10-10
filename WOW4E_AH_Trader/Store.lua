@@ -91,6 +91,25 @@ local function CopyDefaults(target, defaults)
     end
 end
 
+local function PoolKeyMatchesRealmSet(poolKey, realmKey)
+    if type(poolKey) ~= "string" or type(realmKey) ~= "string" or realmKey == "" then return false end
+    if poolKey == "forever:" .. realmKey then return false end
+    local suffix = ":" .. realmKey
+    return poolKey:sub(1, 8) == "forever:" and poolKey:sub(-#suffix) == suffix
+end
+
+local function PoolScore(pool)
+    if type(pool) ~= "table" then return 0 end
+    local score = 0
+    for _, field in ipairs({ "market", "history", "dailyHistory" }) do
+        local values = pool[field]
+        if type(values) == "table" then
+            for _ in pairs(values) do score = score + 1 end
+        end
+    end
+    return score
+end
+
 function AHT.Store:Load()
     if self.canonicalDB then WOW4E_AHT_DB = self.canonicalDB end
     if type(WOW4E_AHT_DB) ~= "table" then
@@ -193,13 +212,52 @@ function AHT.Store:SelectMarketPool()
     end
     for i, name in ipairs(realms) do realms[i] = tostring(name):gsub("[%s%-]", "") end
     table.sort(realms)
-    local region = GetCurrentRegion and GetCurrentRegion() or "unknown"
-    local key = "forever:" .. tostring(region) .. ":" .. table.concat(realms, "+")
+    -- Forever has reported different numeric values from GetCurrentRegion()
+    -- across client sessions/builds. The connected realm set is the stable
+    -- market context available here, so do not make the region number part of
+    -- the persistence key.
+    local realmKey = table.concat(realms, "+")
+    local key = "forever:" .. realmKey
     local pool = db.marketPools[key]
     if pool ~= nil and type(pool) ~= "table" then
         db.recoveryValues = type(db.recoveryValues) == "table" and db.recoveryValues or {}
         db.recoveryValues["marketPool:" .. key] = pool
         pool = nil
+    end
+
+    -- Migrate the pre-fix pools (for example forever:90:ClassicBetaPvE) to
+    -- the stable key. Prefer the pool containing the most data so a newly
+    -- created empty pool can never hide an existing history after restart.
+    local selectedScore = PoolScore(pool)
+    local migratedKey, migratedPool
+    for candidateKey, candidate in pairs(db.marketPools) do
+        if PoolKeyMatchesRealmSet(candidateKey, realmKey) and type(candidate) == "table" then
+            local candidateScore = PoolScore(candidate)
+            if candidateScore > selectedScore then
+                selectedScore = candidateScore
+                migratedKey, migratedPool = candidateKey, candidate
+            end
+        end
+    end
+    if migratedPool then
+        pool = migratedPool
+        db.marketPools[key] = pool
+        pool.migratedFrom = migratedKey
+    end
+
+    -- Also preserve legacy root data from schema versions that had no
+    -- marketPools table yet.
+    if not pool and PoolKeyMatchesRealmSet(db.marketPoolKey, realmKey) and PoolScore(db) > 0 then
+        pool = {
+            origin = "legacy_root",
+            market = db.market,
+            byItemID = db.byItemID,
+            history = db.history,
+            dailyHistory = db.dailyHistory,
+            scan = db.scan,
+            lastCompletedMarketScanAt = db.lastCompletedMarketScanAt,
+        }
+        db.marketPools[key] = pool
     end
     if not pool then
         pool = { origin = db.marketPoolKey and "realm" or "legacy_origin_unknown" }
